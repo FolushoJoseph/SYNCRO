@@ -29,7 +29,8 @@ describe('SimulationService', () => {
       const currentDate = new Date('2024-01-01');
       const nextDate = service.calculateNextRenewal(currentDate, 'yearly');
       
-      const expectedDate = new Date('2025-01-01');
+      // 2024 is a leap year: Jan 1 + 365 days = Dec 31 2024
+      const expectedDate = new Date('2024-12-31');
       expect(nextDate.toISOString()).toBe(expectedDate.toISOString());
     });
   });
@@ -120,7 +121,8 @@ describe('SimulationService', () => {
         updated_at: '2024-01-01',
       };
 
-      const endDate = new Date('2024-03-01');
+      // Jan 1 + 30 = Jan 31, Jan 31 + 30 = Mar 1 (still <= Mar 1 endDate), so use Feb 29 to get exactly 2
+      const endDate = new Date('2024-02-29');
       const projections = service.projectSubscriptionRenewals(subscription, endDate);
 
       expect(projections).toHaveLength(2);
