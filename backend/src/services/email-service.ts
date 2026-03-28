@@ -169,7 +169,7 @@ export class EmailService {
     const unsubscribeUrl = `${apiUrl}/api/compliance/unsubscribe?token=${token}`;
 
     return {
-      'List-Unsubscribe': `<${unsubscribeUrl}>`,
+      'List-Unsubscribe': `<mailto:unsubscribe@syncro.app>, <${unsubscribeUrl}>`,
       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
     };
   }

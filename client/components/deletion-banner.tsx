@@ -5,8 +5,8 @@ import { useState, useEffect } from 'react';
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 interface DeletionStatus {
-  pending: boolean;
-  scheduledDate?: string;
+  status: string;
+  scheduled_deletion_at?: string;
 }
 
 export default function DeletionBanner() {
@@ -22,7 +22,7 @@ export default function DeletionBanner() {
         if (!res.ok) return;
         const json = await res.json();
         const data: DeletionStatus = json.data ?? json;
-        if (data?.pending) setStatus(data);
+        if (data?.status === 'pending') setStatus(data);
       })
       .catch(() => {
         // Silently fail — no banner shown on error
@@ -45,8 +45,8 @@ export default function DeletionBanner() {
 
   if (!status || hidden) return null;
 
-  const formattedDate = status.scheduledDate
-    ? new Date(status.scheduledDate).toLocaleDateString(undefined, {
+  const formattedDate = status.scheduled_deletion_at
+    ? new Date(status.scheduled_deletion_at).toLocaleDateString(undefined, {
         year: 'numeric',
         month: 'long',
         day: 'numeric',

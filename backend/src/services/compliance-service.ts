@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { supabase } from '../config/database';
 import logger from '../config/logger';
+import { emailService } from './email-service';
 
 export interface UserExportData {
   profile: any;
@@ -188,6 +189,22 @@ export class ComplianceService {
     });
 
     logger.info(`Account deletion requested for user ${userId}, scheduled for ${scheduledDeletionAt.toISOString()}`);
+
+    // Send confirmation email
+    try {
+      const { data: { user } } = await supabase.auth.admin.getUserById(userId);
+      if (user?.email) {
+        await emailService.sendSimpleEmail(
+          user.email,
+          'Account Deletion Scheduled — Synchro',
+          `Your account is scheduled for permanent deletion on ${scheduledDeletionAt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}. You can cancel this by logging in to your account. After this date, all your data will be permanently deleted.`,
+          { userId, emailType: 'updates' }
+        );
+      }
+    } catch (emailError) {
+      logger.error('Failed to send deletion confirmation email:', emailError);
+    }
+
     return deletionRecord;
   }
 
@@ -248,6 +265,20 @@ export class ComplianceService {
           .from('audit_logs')
           .update({ user_id: null, ip_address: null, user_agent: null })
           .eq('user_id', deletion.user_id);
+
+        // Send final confirmation email before deleting auth user
+        try {
+          const { data: { user } } = await supabase.auth.admin.getUserById(deletion.user_id);
+          if (user?.email) {
+            await emailService.sendSimpleEmail(
+              user.email,
+              'Account Deleted — Synchro',
+              'Your Synchro account has been permanently deleted and all personal data has been removed. Anonymized audit logs have been retained for security purposes. Thank you for using Synchro.'
+            );
+          }
+        } catch (emailError) {
+          logger.error(`Failed to send final deletion email for user ${deletion.user_id}:`, emailError);
+        }
 
         const { error: deleteError } = await supabase.auth.admin.deleteUser(deletion.user_id);
 

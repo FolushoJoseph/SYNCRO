@@ -4,8 +4,25 @@ import { authenticate, AuthenticatedRequest } from '../middleware/auth';
 import { complianceService } from '../services/compliance-service';
 import { supabase } from '../config/database';
 import logger from '../config/logger';
+import { RateLimiterFactory } from '../middleware/rate-limit-factory';
 
 const router = Router();
+
+// ─── XSS Helper ──────────────────────────────────────────────────────────────
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ─── Rate limiters ────────────────────────────────────────────────────────────
+
+const exportRateLimit = RateLimiterFactory.createCustomLimiter({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 1,
+  message: { error: 'Export rate limit exceeded. Try again in 1 hour.' },
+  keyGenerator: (req: any) => req.user?.id || req.ip,
+  endpointType: 'data-export',
+});
 
 // ─── HTML Renderers ──────────────────────────────────────────────────────────
 
@@ -21,7 +38,7 @@ const BASE_STYLE = `
 `;
 
 function renderConfirmPage(token: string, emailType: string): string {
-  const friendlyType = emailType.replace(/_/g, ' ');
+  const friendlyType = escapeHtml(emailType.replace(/_/g, ' '));
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribe</title>
@@ -31,7 +48,7 @@ function renderConfirmPage(token: string, emailType: string): string {
     <h1>Unsubscribe</h1>
     <p>You are about to unsubscribe from <strong>${friendlyType}</strong> emails. Click the button below to confirm.</p>
     <form method="POST" action="/api/compliance/unsubscribe">
-      <input type="hidden" name="token" value="${token}">
+      <input type="hidden" name="token" value="${escapeHtml(token)}">
       <button type="submit" class="btn">Confirm Unsubscribe</button>
     </form>
   </div>
@@ -40,7 +57,7 @@ function renderConfirmPage(token: string, emailType: string): string {
 }
 
 function renderSuccessPage(emailType: string): string {
-  const friendlyType = emailType.replace(/_/g, ' ');
+  const friendlyType = escapeHtml(emailType.replace(/_/g, ' '));
   return `<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Unsubscribed</title>
@@ -64,7 +81,7 @@ function renderErrorPage(message: string): string {
 <body>
   <div class="card">
     <h1>Something went wrong</h1>
-    <p class="error-msg">${message}</p>
+    <p class="error-msg">${escapeHtml(message)}</p>
   </div>
 </body>
 </html>`;
@@ -112,7 +129,7 @@ async function resolveUserFromTokenOrSession(
  * GET /api/compliance/export
  * Auth required. Streams a ZIP archive containing the user's data.
  */
-router.get('/export', authenticate, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/export', authenticate, exportRateLimit, async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.user!.id;
   try {
     const data = await complianceService.gatherUserData(userId);
