@@ -1,12 +1,27 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import { subscriptionService } from '../services/subscription-service';
 import { giftCardService } from '../services/gift-card-service';
 import { idempotencyService } from '../services/idempotency';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth';
 import { validateSubscriptionOwnership, validateBulkSubscriptionOwnership } from '../middleware/ownership';
 import { requireRole } from '../middleware/rbac';
+import { auditService } from '../services/audit-service';
+import { previewImport, commitImport, CSV_TEMPLATE } from '../services/csv-import-service';
 import logger from '../config/logger';
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1 * 1024 * 1024 }, // 1 MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are accepted'));
+    }
+  },
+});
 
 // Zod schema for URL fields — only http/https allowed
 const safeUrlSchema = z
@@ -718,5 +733,75 @@ router.post("/bulk", validateBulkSubscriptionOwnership, requireRole('owner', 'ad
     });
   }
 });
+
+// ─── CSV Import ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/subscriptions/import/template
+ * Download the CSV template.
+ */
+router.get('/import/template', authenticate, (_req: AuthenticatedRequest, res: Response) => {
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="syncro-import-template.csv"');
+  res.send(CSV_TEMPLATE);
+});
+
+/**
+ * POST /api/subscriptions/import
+ * Preview (default) or commit (commit=true) a CSV import.
+ *
+ * Query params:
+ *   commit=true        — save valid rows instead of just previewing
+ *   skip_dupes=false   — import duplicates anyway (default: skip)
+ */
+router.post(
+  '/import',
+  authenticate,
+  upload.single('file'),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No CSV file uploaded' });
+      }
+
+      const isCommit = req.query.commit === 'true';
+      const skipDupes = req.query.skip_dupes !== 'false';
+
+      // Always preview first (validates + deduplicates)
+      const preview = await previewImport(req.file.buffer, userId);
+
+      if (!isCommit) {
+        return res.status(200).json({ success: true, data: { preview } });
+      }
+
+      // Commit
+      const result = await commitImport(preview.rows, userId, skipDupes);
+
+      // Log to audit trail
+      await auditService.insertEntry({
+        userId,
+        action: 'csv_import',
+        resourceType: 'subscription',
+        metadata: {
+          imported: result.imported,
+          skipped: result.skipped,
+          errors: result.errors,
+          filename: req.file.originalname,
+        },
+      });
+
+      logger.info('CSV import committed', { userId, ...result });
+
+      return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Import failed';
+      logger.error('CSV import error:', error);
+      return res.status(400).json({ success: false, error: message });
+    }
+  },
+);
 
 export default router;

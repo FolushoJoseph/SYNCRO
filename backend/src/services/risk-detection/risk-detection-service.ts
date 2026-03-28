@@ -1,11 +1,9 @@
-The following is the integrated code for the `RiskDetectionService`, resolving the merge conflicts by including the `webhookService` and ensuring consistent string quoting:
-
-```typescript
 /**
  * Risk Detection Service
  * Core service for computing and managing subscription risk scores
  */
 
+import pLimit from "p-limit";
 import { supabase } from "../../config/database";
 import logger from "../../config/logger";
 import { Subscription } from "../../types/subscription";
@@ -25,6 +23,11 @@ import { ConsecutiveFailuresEvaluator } from "./evaluators/consecutive-failures-
 import { BalanceProjectionEvaluator } from "./evaluators/balance-projection-evaluator";
 import { ApprovalExpirationEvaluator } from "./evaluators/approval-expiration-evaluator";
 import { RiskAggregator } from "./risk-aggregator";
+
+const RISK_CALC_CONCURRENCY = parseInt(
+  process.env.RISK_CALC_CONCURRENCY ?? "10",
+  10,
+);
 
 export class RiskDetectionService {
   private consecutiveFailuresEvaluator: ConsecutiveFailuresEvaluator;
@@ -232,7 +235,11 @@ export class RiskDetectionService {
   }
 
   /**
-   * Recalculate risk for all active subscriptions
+   * Recalculate risk for all active subscriptions.
+   *
+   * Each page of 100 subscriptions is processed concurrently up to
+   * RISK_CALC_CONCURRENCY (default 10) simultaneous calculations,
+   * giving ~10x throughput over the previous sequential approach.
    */
   async recalculateAllRisks(): Promise<RiskRecalculationResult> {
     const startTime = Date.now();
@@ -244,10 +251,13 @@ export class RiskDetectionService {
       duration_ms: 0,
     };
 
-    try {
-      logger.info("Starting risk recalculation for all active subscriptions");
+    const limit = pLimit(RISK_CALC_CONCURRENCY);
 
-      // Fetch all active subscriptions in batches
+    try {
+      logger.info("Starting risk recalculation for all active subscriptions", {
+        concurrency: RISK_CALC_CONCURRENCY,
+      });
+
       const batchSize = 100;
       let offset = 0;
       let hasMore = true;
@@ -271,24 +281,36 @@ export class RiskDetectionService {
 
         result.total += subscriptions.length;
 
-        // Process each subscription
-        for (const subscription of subscriptions) {
-          try {
-            const assessment = await this.computeRiskLevel(subscription.id);
-            await this.saveRiskScore(assessment, subscription.user_id);
-            result.successful++;
-          } catch (error) {
-            result.failed++;
-            result.errors.push({
-              subscription_id: subscription.id,
-              error: error instanceof Error ? error.message : String(error),
-            });
-            logger.error(
-              `Failed to recalculate risk for subscription ${subscription.id}:`,
-              error,
-            );
-          }
-        }
+        // Process the page concurrently, bounded by pLimit
+        await Promise.all(
+          subscriptions.map((subscription) =>
+            limit(async () => {
+              try {
+                const assessment = await this.computeRiskLevel(subscription.id);
+                await this.saveRiskScore(assessment, subscription.user_id);
+                result.successful++;
+              } catch (err) {
+                result.failed++;
+                result.errors.push({
+                  subscription_id: subscription.id,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+                logger.error(
+                  `Failed to recalculate risk for subscription ${subscription.id}:`,
+                  err,
+                );
+              }
+            }),
+          ),
+        );
+
+        // Progress log every page (100 subscriptions)
+        logger.info("Risk recalculation progress", {
+          processed: result.total,
+          successful: result.successful,
+          failed: result.failed,
+          elapsed_ms: Date.now() - startTime,
+        });
 
         offset += batchSize;
         hasMore = subscriptions.length === batchSize;
@@ -301,6 +323,7 @@ export class RiskDetectionService {
         successful: result.successful,
         failed: result.failed,
         duration_ms: result.duration_ms,
+        concurrency: RISK_CALC_CONCURRENCY,
       });
 
       return result;
@@ -345,4 +368,3 @@ export class RiskDetectionService {
 }
 
 export const riskDetectionService = new RiskDetectionService();
-```
