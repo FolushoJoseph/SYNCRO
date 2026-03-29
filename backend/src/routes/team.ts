@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { z } from 'zod';
 import { supabase } from '../config/database';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth';
+import { requireRole } from '../middleware/rbac';
 import { emailService } from '../services/email-service';
 import { createTeamInviteLimiter } from '../middleware/rate-limit-factory';
 import logger from '../config/logger';
@@ -178,6 +179,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
  */
 router.post('/invite', async (req: AuthenticatedRequest, res: Response) => {
 router.post('/invite', createTeamInviteLimiter(), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/invite', createTeamInviteLimiter(), requireRole('owner', 'admin'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const bodyValidation = inviteSchema.safeParse(req.body);
     if (!bodyValidation.success) {
@@ -311,6 +313,7 @@ router.post('/invite', createTeamInviteLimiter(), async (req: AuthenticatedReque
  *         description: Forbidden
  */
 router.get('/pending', async (req: AuthenticatedRequest, res: Response) => {
+router.get('/pending', requireRole('owner', 'admin'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const ctx = await resolveUserTeam(req.user!.id);
 
@@ -473,6 +476,7 @@ router.post('/accept/:token', async (req: AuthenticatedRequest, res: Response) =
  *         description: Member not found
  */
 router.put('/:memberId/role', async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:memberId/role', requireRole('owner'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { memberId } = req.params;
 
@@ -552,6 +556,7 @@ router.put('/:memberId/role', async (req: AuthenticatedRequest, res: Response) =
  *         description: Member not found
  */
 router.delete('/:memberId', async (req: AuthenticatedRequest, res: Response) => {
+router.delete('/:memberId', requireRole('owner', 'admin'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { memberId } = req.params;
 
