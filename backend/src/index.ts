@@ -193,6 +193,7 @@ import auditRoutes from './routes/audit';
 import digestRoutes from './routes/digest';
 import mfaRoutes from './routes/mfa';
 import pushNotificationRoutes from './routes/push-notifications';
+import webhookRoutes from './routes/webhooks';
 import { monitoringService } from './services/monitoring-service';
 import { healthService } from './services/health-service';
 import { eventListener } from './services/event-listener';
@@ -202,6 +203,14 @@ import { swaggerSpec } from './swagger';
 const app = express();
 const PORT = process.env.PORT || 3001;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'development-admin-key';
+import { scheduleAutoResume } from './jobs/auto-resume';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_API_KEY) {
+  throw new Error(
+    'ADMIN_API_KEY environment variable is required. ' +
+    'Please set it to a strong random value and restart the server.'
+  );
+}
 
 // CORS configuration
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -228,6 +237,7 @@ app.use(requestLoggerMiddleware);
 
 
 import { adminAuth } from './middleware/admin';
+import { createAdminLimiter, RateLimiterFactory } from './middleware/rate-limit-factory';
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -253,6 +263,94 @@ app.use('/api/mfa', mfaRoutes);
 app.use('/api/notifications/push', pushNotificationRoutes);
 
 // API Routes (Public/Standard)
+app.use('/api/webhooks', webhookRoutes);
+app.get('/api/reminders/status', (req, res) => {
+  const status = schedulerService.getStatus();
+  res.json(status);
+});
+// Admin Monitoring Endpoints (Read-only)
+app.get('/api/admin/metrics/subscriptions', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const metrics = await monitoringService.getSubscriptionMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch subscription metrics' });
+  }
+});
+app.get('/api/admin/metrics/renewals', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const metrics = await monitoringService.getRenewalMetrics();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch renewal metrics' });
+  }
+});
+app.get('/api/admin/metrics/activity', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const metrics = await monitoringService.getAgentActivity();
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch agent activity' });
+  }
+});
+// Protocol Health Monitor: unified admin health (metrics, alerts, history)
+app.get('/api/admin/health', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const includeHistory = req.query.history !== 'false';
+    const health = await healthService.getAdminHealth(includeHistory);
+    const statusCode = health.status === 'unhealthy' ? 503 : 200;
+    res.status(statusCode).json(health);
+  } catch (error) {
+    logger.error('Error fetching admin health:', error);
+    res.status(500).json({ error: 'Failed to fetch health status' });
+  }
+});
+// Manual trigger endpoints (for testing/admin - Should eventually be protected)
+app.post('/api/reminders/process', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    await reminderEngine.processReminders();
+    res.json({ success: true, message: 'Reminders processed' });
+  } catch (error) {
+    logger.error('Error processing reminders:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+app.post('/api/reminders/schedule', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const daysBefore = req.body.daysBefore || [7, 3, 1];
+    await reminderEngine.scheduleReminders(daysBefore);
+    res.json({ success: true, message: 'Reminders scheduled' });
+  } catch (error) {
+    logger.error('Error scheduling reminders:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+app.post('/api/reminders/retry', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    await reminderEngine.processRetries();
+    res.json({ success: true, message: 'Retries processed' });
+  } catch (error) {
+    logger.error('Error processing retries:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+// Protocol Health Monitor: record metrics snapshot periodically (historical storage)
+const HEALTH_SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+function startHealthSnapshotInterval() {
+  setInterval(() => {
+    healthService.recordSnapshot().catch(() => {});
+  }, HEALTH_SNAPSHOT_INTERVAL_MS);
+  // Record one snapshot shortly after startup
+  setTimeout(() => healthService.recordSnapshot().catch(() => {}), 5000);
 /**
  * @openapi
  * /api/reminders/status:
