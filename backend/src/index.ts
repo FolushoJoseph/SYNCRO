@@ -127,8 +127,6 @@ app.get('/api/admin/health', createAdminLimiter(), adminAuth, async (req, res) =
   }
 });
 
-// Manual trigger endpoints (admin-protected)
-app.post('/api/reminders/process', adminAuth, async (req, res) => {
 // Manual trigger endpoints (for testing/admin - Should eventually be protected)
 app.post('/api/reminders/process', createAdminLimiter(), adminAuth, async (req, res) => {
   try {
@@ -217,7 +215,7 @@ const server = app.listen(PORT, async () => {
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
   // Validate critical env vars at startup — warn clearly so operators know what's missing
-  const criticalEnvVars = ['SOROBAN_CONTRACT_ADDRESS', 'SOROBAN_RPC_URL'];
+  const criticalEnvVars = ['SOROBAN_CONTRACT_ADDRESS', 'STELLAR_NETWORK_URL'];
   for (const envVar of criticalEnvVars) {
     if (!process.env[envVar]) {
       logger.warn(`${envVar} not configured — EventListener will be disabled`);
