@@ -1,6 +1,7 @@
 import { supabase } from "../config/database";
 import { blockchainService } from "./blockchain-service";
 import { renewalCooldownService } from "./renewal-cooldown-service";
+import { analyticsService } from "./analytics-service";
 import { webhookService } from "./webhook-service";
 import logger from "../config/logger";
 import { DatabaseTransaction } from "../utils/transaction";
@@ -27,12 +28,11 @@ export interface SubscriptionSyncResult {
 /**
  * Subscription service with blockchain sync and transaction management
  */
-
 export class SubscriptionService {
   async createSubscription(
     userId: string,
     input: SubscriptionCreateInput,
-    idempotencyKey?: string
+    idempotencyKey?: string,
   ): Promise<SubscriptionSyncResult> {
     return await DatabaseTransaction.execute(async (client) => {
       try {
@@ -43,6 +43,7 @@ export class SubscriptionService {
             name: input.name,
             provider: input.provider || input.name,
             price: input.price,
+            currency: input.currency || 'USD',
             billing_cycle: input.billing_cycle,
             status: input.status || "active",
             next_billing_date: input.next_billing_date || null,
@@ -94,6 +95,11 @@ export class SubscriptionService {
           };
         }
 
+        // Trigger budget check (don't let it block response)
+        analyticsService.checkBudgetThreshold(userId).catch(e => 
+          logger.error('Background budget check failed:', e)
+        );
+
         return {
           subscription,
           blockchainResult,
@@ -106,9 +112,10 @@ export class SubscriptionService {
     });
   }
 
-  // Update subscription with blockchain sync
-  //Uses optimistic locking to prevent race conditions
-
+  /**
+   * Update subscription with blockchain sync.
+   * Uses optimistic locking to prevent race conditions.
+   */
   async updateSubscription(
     userId: string,
     subscriptionId: string,
@@ -117,7 +124,7 @@ export class SubscriptionService {
   ): Promise<SubscriptionSyncResult> {
     return await DatabaseTransaction.execute(async (client) => {
       try {
-        // First, verify ownership and get current version
+        // Verify ownership before updating
         const { data: existing, error: fetchError } = await client
           .from("subscriptions")
           .select("*")
@@ -128,12 +135,14 @@ export class SubscriptionService {
         if (fetchError || !existing) {
           throw new Error("Subscription not found or access denied");
         }
+
         // Explicit allowlist — prevents field injection attacks by never spreading raw input
         const {
           name,
           provider,
           merchant_id,
           price,
+          currency,
           billing_cycle,
           status,
           next_billing_date,
@@ -150,6 +159,7 @@ export class SubscriptionService {
           ...(provider !== undefined && { provider }),
           ...(merchant_id !== undefined && { merchant_id }),
           ...(price !== undefined && { price }),
+          ...(currency !== undefined && { currency }),
           ...(billing_cycle !== undefined && { billing_cycle }),
           ...(status !== undefined && { status }),
           ...(next_billing_date !== undefined && { next_billing_date }),
@@ -204,6 +214,11 @@ export class SubscriptionService {
                 : String(blockchainError),
           };
         }
+
+        // Trigger budget check
+        analyticsService.checkBudgetThreshold(userId).catch(e => 
+          logger.error('Background budget check failed:', e)
+        );
 
         return {
           subscription,
@@ -266,13 +281,10 @@ export class SubscriptionService {
 
           if (!blockchainResult.success) {
             syncStatus = "partial";
-            logger.warn(
-              "Blockchain sync failed for subscription cancellation",
-              {
-                subscriptionId,
-                error: blockchainResult.error,
-              },
-            );
+            logger.warn("Blockchain sync failed for subscription cancellation", {
+              subscriptionId,
+              error: blockchainResult.error,
+            });
           }
         } catch (blockchainError) {
           syncStatus = "partial";
@@ -299,6 +311,9 @@ export class SubscriptionService {
   }
 
   // Delete subscription with blockchain sync
+  /**
+   * Delete subscription with blockchain sync
+   */
   async deleteSubscription(
     userId: string,
     subscriptionId: string,
@@ -334,6 +349,7 @@ export class SubscriptionService {
             userId,
             subscriptionId,
             "cancel",
+            "delete",
             subscription,
           );
 
@@ -355,6 +371,11 @@ export class SubscriptionService {
                 : String(blockchainError),
           };
         }
+
+        // Trigger budget check
+        analyticsService.checkBudgetThreshold(userId).catch(e => 
+          logger.error('Background budget check failed:', e)
+        );
 
         return {
           subscription,
@@ -532,7 +553,130 @@ export class SubscriptionService {
   }
 
   // Get subscription by ID (with ownership check)
+        // 1. Fetch and verify ownership
+        const { data: subscription, error: fetchError } = await client
+          .from("subscriptions")
+          .select("*")
+          .eq("id", subscriptionId)
+          .eq("user_id", userId)
+          .single();
+        if (fetchError || !subscription) {
+          throw new Error("Subscription not found or access denied");
+        // 2. Guard: can only pause an active subscription
+        if (subscription.status === "paused") {
+          throw new Error("Subscription is already paused");
+        if (subscription.status === "cancelled") {
+          throw new Error("Cannot pause a cancelled subscription");
+        // 3. Write to DB
+        const { data: updatedSubscription, error: updateError } = await client
+          .from("subscriptions")
+          .update({
+            status: "paused",
+            paused_at: new Date().toISOString(),
+            resume_at: resumeAt ?? null,
+            pause_reason: reason ?? null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", subscriptionId)
+          .eq("user_id", userId)
+          .select()
+          .single();
+        if (updateError) {
+          throw new Error(`Pause failed: ${updateError.message}`);
+        // 4. Sync to blockchain (non-fatal if it fails)
+        let blockchainResult;
+        let syncStatus: "synced" | "partial" | "failed" = "synced";
+        try {
+          blockchainResult = await blockchainService.syncSubscription(
+            userId,
+            "pause",         // blockchain service will call pause() on the contract
+            updatedSubscription,
+          );
+          if (!blockchainResult.success) {
+            syncStatus = "partial";
+            logger.warn("Blockchain sync failed for subscription pause", {
+              subscriptionId,
+              error: blockchainResult.error,
+            });
+          }
+        } catch (blockchainError) {
+          logger.error("Blockchain sync error (non-fatal):", blockchainError);
+          blockchainResult = {
+            success: false,
+            error: blockchainError instanceof Error
+              ? blockchainError.message
+              : String(blockchainError),
+          };
+        return {
+          subscription: updatedSubscription,
+          blockchainResult,
+          syncStatus,
+      } catch (error) {
+        logger.error("Pause failed:", error);
+        throw error;
+        // 1. Fetch and verify ownership
+        const { data: subscription, error: fetchError } = await client
+          .from("subscriptions")
+          .select("*")
+          .eq("id", subscriptionId)
+          .eq("user_id", userId)
+          .single();
+        if (fetchError || !subscription) {
+          throw new Error("Subscription not found or access denied");
+        // 2. Guard: can only resume a paused subscription
+        if (subscription.status !== "paused") {
+          throw new Error("Subscription is not paused");
+        // 3. Write to DB — clear all pause fields, restore active
+        const { data: updatedSubscription, error: updateError } = await client
+          .from("subscriptions")
+          .update({
+            status: "active",
+            paused_at: null,
+            resume_at: null,
+            pause_reason: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", subscriptionId)
+          .eq("user_id", userId)
+          .select()
+          .single();
+        if (updateError) {
+          throw new Error(`Resume failed: ${updateError.message}`);
+        // 4. Sync to blockchain (non-fatal if it fails)
+        let blockchainResult;
+        let syncStatus: "synced" | "partial" | "failed" = "synced";
+        try {
+          blockchainResult = await blockchainService.syncSubscription(
+            userId,
+            "unpause",       // blockchain service will call unpause() on the contract
+            updatedSubscription,
+          );
+          if (!blockchainResult.success) {
+            syncStatus = "partial";
+            logger.warn("Blockchain sync failed for subscription resume", {
+              subscriptionId,
+              error: blockchainResult.error,
+            });
+          }
+        } catch (blockchainError) {
+          logger.error("Blockchain sync error (non-fatal):", blockchainError);
+          blockchainResult = {
+            success: false,
+            error: blockchainError instanceof Error
+              ? blockchainError.message
+              : String(blockchainError),
+          };
+        return {
+          subscription: updatedSubscription,
+          blockchainResult,
+          syncStatus,
+      } catch (error) {
+        logger.error("Resume failed:", error);
+        throw error;
 
+  /**
+   * Get subscription by ID (with ownership check)
+   */
   async getSubscription(userId: string, subscriptionId: string): Promise<Subscription> {
     const { data: subscription, error } = await supabase
       .from("subscriptions")
@@ -549,6 +693,9 @@ export class SubscriptionService {
   }
 
   // List user's subscriptions with cursor-based pagination
+  /**
+   * List user's subscriptions with optional filtering
+   */
   async listSubscriptions(
     userId: string,
     options: ListSubscriptionsOptions = {},
@@ -612,8 +759,8 @@ export class SubscriptionService {
   }
 
   /**
-   * Check if a renewal can be attempted based on cooldown period
-   * Returns cooldown status without enforcing it
+   * Check if a renewal can be attempted based on cooldown period.
+   * Returns cooldown status without enforcing it.
    */
   async checkRenewalCooldown(
     subscriptionId: string,
@@ -624,9 +771,7 @@ export class SubscriptionService {
     message: string;
   }> {
     try {
-      const cooldownStatus = await renewalCooldownService.checkCooldown(
-        subscriptionId,
-      );
+      const cooldownStatus = await renewalCooldownService.checkCooldown(subscriptionId);
 
       return {
         canRetry: cooldownStatus.canRetry,
@@ -643,8 +788,8 @@ export class SubscriptionService {
   }
 
   /**
-   * Retry blockchain sync for a subscription with cooldown enforcement
-   * Enforces minimum time gap between renewal attempts to prevent network spam
+   * Retry blockchain sync for a subscription with cooldown enforcement.
+   * Enforces minimum time gap between renewal attempts to prevent network spam.
    */
   async retryBlockchainSync(
     userId: string,
@@ -654,9 +799,7 @@ export class SubscriptionService {
     try {
       // Check cooldown unless forcing bypass (admin operations)
       if (!forceBypass) {
-        const cooldownStatus = await renewalCooldownService.checkCooldown(
-          subscriptionId,
-        );
+        const cooldownStatus = await renewalCooldownService.checkCooldown(subscriptionId);
 
         if (cooldownStatus.isOnCooldown) {
           const error = `Cooldown period active. Please wait ${cooldownStatus.timeRemainingSeconds} seconds before retrying.`;
