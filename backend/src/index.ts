@@ -129,6 +129,7 @@ app.get('/api/admin/health', createAdminLimiter(), adminAuth, async (req, res) =
   try {
     const includeHistory = req.query.history !== 'false';
     const health = await healthService.getAdminHealth(includeHistory);
+    const health = await healthService.getAdminHealth(includeHistory, eventListener.getHealth());
     const statusCode = health.status === 'unhealthy' ? 503 : 200;
     res.status(statusCode).json(health);
   } catch (error) {
@@ -779,6 +780,38 @@ function startHealthSnapshotInterval() {
   setTimeout(() => healthService.recordSnapshot().catch(() => {}), 5000);
 }
 
+app.post('/api/admin/expiry/process', createAdminLimiter(), adminAuth, async (req, res) => {
+  try {
+    const result = await expiryService.processExpiries();
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error('Error processing expiries:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+// Start server
+const server = app.listen(PORT, async () => {
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+  // Validate critical env vars at startup — warn clearly so operators know what's missing
+  const criticalEnvVars = ['SOROBAN_CONTRACT_ADDRESS', 'STELLAR_NETWORK_URL'];
+  for (const envVar of criticalEnvVars) {
+    if (!process.env[envVar]) {
+      logger.warn(`${envVar} not configured — EventListener will be disabled`);
+    }
+  }
+
+  // Initialize rate limiting Redis store
+  try {
+    await RateLimiterFactory.initializeRedisStore();
+    logger.info('Rate limiting initialized successfully');
+  } catch (error) {
+    logger.warn('Rate limiting initialization failed, using memory store:', error);
 /**
  * @openapi
  * /api/admin/expiry/process:
@@ -818,5 +851,42 @@ export function validateMnemonic(mnemonic: string): boolean {
     return false;
   }
 
+  // Start health metrics snapshot loop
+  startHealthSnapshotInterval();
+
+  // Start event listener (no-op if disabled due to missing config)
+  await eventListener.start();
+  const elHealth = eventListener.getHealth();
+  if (elHealth.status === 'disabled') {
+    logger.warn('EventListener is disabled', { reason: elHealth.reason });
+  } else {
+    logger.info('EventListener started', { status: elHealth.status });
+  }
+
+  scheduleAutoResume();
+});
+
+
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  schedulerService.stop();
+  eventListener.stop();
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  schedulerService.stop();
+  eventListener.stop();
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});
   return bip39.validateMnemonic(words.join(' '));
 }
