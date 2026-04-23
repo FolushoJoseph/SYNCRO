@@ -476,4 +476,29 @@ router.get('/auto-tag', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// POST /api/subscriptions/:id/track-interaction
+// Called when user clicks "Open Site" to log last_interaction_at
+router.post('/:id/track-interaction', validateSubscriptionOwnership, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const subscriptionId = resolveParam(req.params.id);
+    const now = new Date().toISOString();
+
+    const { error } = await (await import('../config/database')).supabase
+      .from('subscriptions')
+      .update({ last_interaction_at: now, updated_at: now })
+      .eq('id', subscriptionId)
+      .eq('user_id', req.user!.id);
+
+    if (error) {
+      logger.error('track-interaction update error:', error);
+      return res.status(500).json({ success: false, error: 'Failed to log interaction' });
+    }
+
+    return res.json({ success: true, last_interaction_at: now });
+  } catch (error) {
+    logger.error('track-interaction error:', error);
+    return res.status(500).json({ success: false, error: 'Failed to log interaction' });
+  }
+});
+
 export default router;
