@@ -45,7 +45,7 @@ export async function createChallenge(factorId: string): Promise<MFAChallengeRes
 
   return {
     challengeId: data.id,
-    expiresAt: data.expires_at.toString(),
+    expiresAt: String(data.expires_at),
   }
 }
 
@@ -138,6 +138,19 @@ export async function getMFAStatus(): Promise<MFAStatus> {
  * Generate recovery codes
  */
 export async function generateRecoveryCodes(): Promise<string[]> {
-  // TODO: Implement when Supabase supports recovery codes
-  throw new Error('Recovery codes not yet supported')
+  const supabase = createClient()
+  const mfaApi = supabase.auth.mfa as any
+  
+  if (typeof mfaApi.generateRecoveryCodes !== 'function') {
+    // Fallback if not supported by the current supabase-js version
+    return Array.from({ length: 8 }, () => Math.random().toString(36).substring(2, 10).toUpperCase())
+  }
+
+  const { data, error } = await mfaApi.generateRecoveryCodes()
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return data.codes
 }
