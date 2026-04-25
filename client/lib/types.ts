@@ -166,3 +166,46 @@ export interface MFAStatus {
   nextLevel: 'aal1' | 'aal2';
   recoveryCodesRemaining: number;
 }
+
+// Teams Page Models
+export interface EmailAccount {
+  email: string;
+  isWorkEmail: boolean;
+}
+
+export interface TeamSubscription {
+  name: string;
+  usage: number;
+  lastUsed: string;
+  email: string;
+}
+
+export type TeamRole = "Admin" | "Billing Manager" | "Member" | "Viewer" | string;
+export type TeamMemberStatus = "active" | "pending" | "inactive" | string;
+
+export interface TeamMember {
+  id: number;
+  name: string;
+  email: string;
+  role: TeamRole;
+  department: string;
+  permissions: string[];
+  status: TeamMemberStatus;
+  toolsUsed: number;
+  monthlySpend: number;
+  emailAccounts: EmailAccount[];
+  subscriptions: TeamSubscription[];
+  leftAt?: Date;
+}
+
+export interface Workspace {
+  id?: string;
+  name?: string;
+  domain?: string;
+  plan?: string;
+}
+
+export interface TeamSettings {
+  spendingLimit: number;
+  departmentBudgets: Record<string, number>;
+}
