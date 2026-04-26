@@ -55,7 +55,7 @@ export async function requireAuth(request: NextRequest) {
 
 /**
  * Require specific role/permission
- * Extend this based on your authorization model
+ * Gets role from authoritative backend source instead of metadata
  */
 export async function requireRole(
   request: NextRequest,
@@ -63,11 +63,27 @@ export async function requireRole(
 ) {
   const user = await getAuthenticatedUser(request)
   
-  // TODO: Implement role checking based on your user model
-  // For now, we'll check user metadata or a roles table
-  const userRole = user.user_metadata?.role || 'user'
+  // Get the auth token from the request
+  const authHeader = request.headers.get('authorization')
+  if (!authHeader?.startsWith('Bearer ')) {
+    throw ApiErrors.unauthorized('No auth token available')
+  }
+
+  // Get role from authoritative backend source
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/user/role`, {
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw ApiErrors.forbidden('Unable to verify user role')
+  }
+
+  const { role } = await response.json()
   
-  if (!allowedRoles.includes(userRole)) {
+  if (!allowedRoles.includes(role)) {
     throw ApiErrors.forbidden(`Requires one of: ${allowedRoles.join(', ')}`)
   }
 
