@@ -22,6 +22,9 @@ export interface RateLimitSettings {
   admin: RateLimitConfig & {
     windowHours: number;
   };
+  simulation: RateLimitConfig & {
+    windowHours: number;
+  };
 }
 
 /**
@@ -69,6 +72,10 @@ export function loadRateLimitConfig(): RateLimitSettings {
   const adminMax = parseIntEnv(process.env.RATE_LIMIT_ADMIN_MAX, 100);
   const adminWindowHours = parseIntEnv(process.env.RATE_LIMIT_ADMIN_WINDOW_HOURS, 1);
 
+  // Simulation limits
+  const simulationMax = parseIntEnv(process.env.RATE_LIMIT_SIMULATION_MAX, 5);
+  const simulationWindowHours = parseIntEnv(process.env.RATE_LIMIT_SIMULATION_WINDOW_HOURS, 1);
+
   const config: RateLimitSettings = {
     redis: {
       url: redisUrl,
@@ -104,6 +111,16 @@ export function loadRateLimitConfig(): RateLimitSettings {
       standardHeaders: true,
       legacyHeaders: false,
     },
+    simulation: {
+      windowMs: simulationWindowHours * 60 * 60 * 1000, // Convert hours to milliseconds
+      windowHours: simulationWindowHours,
+      max: simulationMax,
+      message: { 
+        error: `Too many simulation requests. You can generate up to ${simulationMax} simulations per ${simulationWindowHours} hour${simulationWindowHours > 1 ? 's' : ''}. Please try again later.` 
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+    },
   };
 
   // Log configuration for operational visibility
@@ -116,6 +133,7 @@ export function loadRateLimitConfig(): RateLimitSettings {
       teamInvite: `${config.teamInvite.max}/${config.teamInvite.windowHours}h`,
       mfa: `${config.mfa.max}/${config.mfa.windowMinutes}m`,
       admin: `${config.admin.max}/${config.admin.windowHours}h`,
+      simulation: `${config.simulation.max}/${config.simulation.windowHours}h`,
     },
   });
 

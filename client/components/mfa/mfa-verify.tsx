@@ -96,8 +96,7 @@ export function MFAVerify({ onSuccess, darkMode = false }: MFAVerifyProps) {
 
       <Button
         onClick={handleVerify}
-        loading={loading}
-        disabled={code.length !== 6}
+        disabled={loading || code.length !== 6}
         className="w-full bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"
       >
         Verify

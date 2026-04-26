@@ -91,7 +91,7 @@ export function MFAManagement({ darkMode = false, teamRequiresMFA = false }: MFA
         {status && !status.enabled && (
           <Button
             onClick={() => setShowSetup(true)}
-            loading={loading}
+            disabled={loading}
             className="bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90 gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -127,7 +127,7 @@ export function MFAManagement({ darkMode = false, teamRequiresMFA = false }: MFA
               <Button
                 variant="secondary"
                 onClick={() => handleDisable(factors[0].id)}
-                loading={loading}
+                disabled={loading}
                 className="text-red-500 hover:bg-red-500/10 gap-2"
               >
                 <Trash2 className="w-4 h-4" />

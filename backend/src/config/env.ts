@@ -68,8 +68,11 @@ const envSchema = z.object({
   // Sentry (optional)
   SENTRY_DSN: z.string().optional(),
 
-  // Anthropic (optional)
-  ANTHROPIC_API_KEY: z.string().optional(),
+  // Secret Management
+  SECRET_PROVIDER_TYPE: z.enum(['local', 'aws', 'vault']).default('local'),
+
+  // Risk calculation concurrency (number of simultaneous risk calculations per page)
+  RISK_CALC_CONCURRENCY: z.string().default('10'),
 });
 
 function validateEnv() {

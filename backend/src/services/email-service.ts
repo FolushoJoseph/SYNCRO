@@ -4,6 +4,7 @@ import { NotificationPayload, DeliveryResult } from '../types/reminder';
 import { withRetry, RetryableError, NonRetryableError } from '../utils/retry';
 import { sanitizeUrl } from '../utils/sanitize-url';
 import { complianceService } from './compliance-service';
+import { secretProvider } from './secret-provider';
 
 export interface EmailConfig {
   host?: string;
@@ -23,46 +24,55 @@ export class EmailService {
   constructor(config?: EmailConfig) {
     this.fromEmail = config?.from || process.env.EMAIL_FROM || 'noreply@synchro.app';
 
-    // Initialize transporter based on config
+    // Initialize transporter based on config if provided synchronously
     if (config?.host) {
-      // SMTP configuration
       this.transporter = nodemailer.createTransport({
         host: config.host,
         port: config.port || 587,
         secure: config.secure || false,
         auth: config.auth,
       });
-    } else if (process.env.SMTP_HOST) {
-      // SMTP from environment variables
+    }
+  }
+
+  private async getTransporter(): Promise<nodemailer.Transporter> {
+    if (this.transporter) {
+      return this.transporter;
+    }
+
+    if (process.env.SMTP_HOST) {
+      const password = await secretProvider.getSecret('SMTP_PASSWORD') || await secretProvider.getSecret('SMTP_PASS') || '';
+      
       this.transporter = nodemailer.createTransport({
         host: process.env.SMTP_HOST,
         port: parseInt(process.env.SMTP_PORT || '587'),
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
           user: process.env.SMTP_USER || '',
-          pass: process.env.SMTP_PASSWORD || '',
+          pass: password,
         },
       });
     } else {
-      // Use SendGrid, Mailgun, or other service via API
-      // For now, log that email service is not configured
       logger.warn('Email service not fully configured. Using mock transporter.');
       this.transporter = nodemailer.createTransport({
-        jsonTransport: true, // Mock transport for development
+        jsonTransport: true,
       });
     }
+
+    return this.transporter;
   }
 
   /**
    * Verify email service connection
    */
   async verifyConnection(): Promise<boolean> {
-    if (!this.transporter) {
+    const transporter = await this.getTransporter();
+    if (!transporter) {
       return false;
     }
 
     try {
-      await this.transporter.verify();
+      await transporter.verify();
       logger.info('Email service connection verified');
       return true;
     } catch (error) {
@@ -87,7 +97,8 @@ export class EmailService {
           const subject = this.getEmailSubject(payload);
           const html = this.getEmailTemplate(payload);
 
-          if (!this.transporter) {
+          const transporter = await this.getTransporter();
+          if (!transporter) {
             throw new NonRetryableError('Email transporter not configured');
           }
 
@@ -95,7 +106,7 @@ export class EmailService {
           const unsubscribeFooter = userId ? this.getUnsubscribeFooter(userId, 'reminders') : '';
           const unsubscribeHeaders = userId ? this.getUnsubscribeHeaders(userId, 'reminders') : {};
 
-          const info = await this.transporter.sendMail({
+          const info = await transporter.sendMail({
             from: this.fromEmail,
             to: recipientEmail,
             subject,
@@ -343,7 +354,8 @@ This is an automated reminder from Synchro.
     text: string,
     options?: { userId?: string; emailType?: string }
   ): Promise<void> {
-    if (!this.transporter) {
+    const transporter = await this.getTransporter();
+    if (!transporter) {
       throw new Error('Email transporter not configured');
     }
     const userId = options?.userId || '';
@@ -351,7 +363,7 @@ This is an automated reminder from Synchro.
     const unsubscribeFooter = userId ? this.getUnsubscribeFooter(userId, emailType) : '';
     const unsubscribeHeaders = userId ? this.getUnsubscribeHeaders(userId, emailType) : {};
 
-    await this.transporter.sendMail({
+    await transporter.sendMail({
       from: this.fromEmail,
       to,
       subject,
@@ -371,7 +383,8 @@ This is an automated reminder from Synchro.
   ): Promise<DeliveryResult> {
     try {
       return await withRetry(async () => {
-        if (!this.transporter) {
+        const transporter = await this.getTransporter();
+        if (!transporter) {
           throw new NonRetryableError('Email transporter not configured');
         }
 
@@ -413,7 +426,7 @@ This is an automated reminder from Synchro.
 
         const text = `${payload.inviterEmail} has invited you to join ${payload.teamName} on Synchro as a ${payload.role}.\n\nAccept invitation: ${payload.acceptUrl}\n\nThis invitation expires on ${expiresFormatted}.`;
 
-        const info = await this.transporter.sendMail({
+        const info = await transporter.sendMail({
           from: this.fromEmail,
           to: recipientEmail,
           subject,
@@ -446,7 +459,8 @@ This is an automated reminder from Synchro.
   }): Promise<DeliveryResult> {
     try {
       return await withRetry(async () => {
-        if (!this.transporter) {
+        const transporter = await this.getTransporter();
+        if (!transporter) {
           throw new NonRetryableError('Email transporter not configured');
         }
 
@@ -489,7 +503,7 @@ This is an automated reminder from Synchro.
 
         const text = `Risk Alert: ${payload.subscriptionName} renewal at risk\n\nFactors:\n${factorsText}\n\nRecommendation: ${payload.recommendedAction}`;
 
-        const info = await this.transporter.sendMail({
+        const info = await transporter.sendMail({
           from: this.fromEmail,
           to: payload.to,
           subject,

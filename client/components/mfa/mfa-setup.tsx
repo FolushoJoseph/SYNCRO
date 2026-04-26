@@ -109,7 +109,7 @@ export function MFASetup({ onComplete, onCancel, darkMode = false }: MFASetupPro
             )}
             <Button
               onClick={handleStart}
-              loading={loading}
+              disabled={loading}
               className="flex-1 bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"
             >
               Start Setup
@@ -202,8 +202,7 @@ export function MFASetup({ onComplete, onCancel, darkMode = false }: MFASetupPro
             </Button>
             <Button
               onClick={handleVerify}
-              loading={loading}
-              disabled={code.length !== 6}
+              disabled={loading || code.length !== 6}
               className="flex-1 bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"
             >
               Verify
@@ -249,7 +248,7 @@ export function MFASetup({ onComplete, onCancel, darkMode = false }: MFASetupPro
 
           <Button
             onClick={handleComplete}
-            loading={loading}
+            disabled={loading}
             className="w-full bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"
           >
             Done

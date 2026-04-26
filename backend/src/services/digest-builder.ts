@@ -4,23 +4,33 @@ import logger from '../config/logger';
 import { buildDigestEmailHtml, buildDigestEmailText } from './digest-template';
 import type { MonthlyDigestSummary, DigestAuditRecord } from '../types/digest';
 
+import { secretProvider } from './secret-provider';
+
 export class DigestEmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter | null = null;
   private fromEmail: string;
   private dashboardUrl: string;
 
   constructor() {
     this.fromEmail   = process.env.EMAIL_FROM     ?? 'noreply@synchro.app';
     this.dashboardUrl = process.env.FRONTEND_URL  ?? 'https://app.syncro.ai';
+  }
+
+  private async getTransporter(): Promise<nodemailer.Transporter> {
+    if (this.transporter) {
+      return this.transporter;
+    }
 
     if (process.env.SMTP_HOST) {
+      const password = await secretProvider.getSecret('SMTP_PASSWORD') || await secretProvider.getSecret('SMTP_PASS') || '';
+      
       this.transporter = nodemailer.createTransport({
         host:   process.env.SMTP_HOST,
         port:   parseInt(process.env.SMTP_PORT ?? '587'),
         secure: process.env.SMTP_SECURE === 'true',
         auth: {
           user: process.env.SMTP_USER     ?? '',
-          pass: process.env.SMTP_PASSWORD ?? '',
+          pass: password,
         },
       });
     } else {
@@ -28,6 +38,7 @@ export class DigestEmailService {
       this.transporter = nodemailer.createTransport({ jsonTransport: true });
       logger.warn('DigestEmailService: SMTP not configured, using mock transporter.');
     }
+    return this.transporter;
   }
 
   /**
@@ -41,7 +52,8 @@ export class DigestEmailService {
     const subject = `Your SYNCRO Monthly Summary — ${summary.periodLabel}`;
 
     try {
-      const info = await this.transporter.sendMail({
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
         from:    this.fromEmail,
         to:      recipientEmail,
         subject,

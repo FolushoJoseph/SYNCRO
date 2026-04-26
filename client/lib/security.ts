@@ -24,7 +24,7 @@ function hexToBytes(hex: string): Uint8Array {
 function getOrCreateSalt(): Uint8Array {
   const existingSalt = localStorage.getItem(SALT_KEY)
   if (existingSalt) {
-    return hexToBytes(existingSalt)
+    return new Uint8Array(hexToBytes(existingSalt).buffer)
   }
 
   const salt = crypto.getRandomValues(new Uint8Array(16))
@@ -45,7 +45,7 @@ async function getEncryptionKey(): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: getOrCreateSalt(),
+      salt: getOrCreateSalt() as unknown as BufferSource,
       iterations: KEY_DERIVATION_ITERATIONS,
       hash: "SHA-256",
     },
@@ -60,7 +60,7 @@ export async function encrypt(value: unknown): Promise<string> {
   const plaintext = new TextEncoder().encode(JSON.stringify(value))
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
   const key = await getEncryptionKey()
-  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext)
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as unknown as BufferSource }, key, plaintext as unknown as BufferSource)
   const ciphertext = new Uint8Array(encrypted)
   return `${STORAGE_VERSION}.${bytesToHex(iv)}.${bytesToHex(ciphertext)}`
 }
@@ -74,7 +74,7 @@ export async function decrypt<T>(encryptedValue: string): Promise<T> {
   const key = await getEncryptionKey()
   const iv = hexToBytes(ivHex)
   const ciphertext = hexToBytes(ciphertextHex)
-  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext)
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as unknown as BufferSource }, key, ciphertext as unknown as BufferSource)
   const plaintext = new TextDecoder().decode(decrypted)
   return JSON.parse(plaintext) as T
 }

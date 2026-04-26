@@ -16,6 +16,11 @@ export class UserPreferenceService {
             auto_retry: true,
         },
         risk_notification_threshold: 'HIGH',
+        quiet_hours_enabled: false,
+        quiet_hours_start: '22:00',
+        quiet_hours_end: '08:00',
+        quiet_hours_timezone: 'UTC',
+        critical_alerts_only: true,
     };
 
     /**

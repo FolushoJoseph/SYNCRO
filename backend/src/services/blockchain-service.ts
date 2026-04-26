@@ -10,6 +10,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
 import { createClient, RedisClientType } from "redis";
+import { secretProvider } from "./secret-provider";
 
 export interface BlockchainLogEntry {
   user_id: string;
@@ -24,7 +25,6 @@ export interface BlockchainLogEntry {
 export class BlockchainService {
   private contractAddress: string | null;
   private rpcUrl: string;
-  private sourceSecret?: string;
   private networkPassphrase: string;
   private redisClient: RedisClientType | null = null;
   private readonly maxRetries = 3;
@@ -34,7 +34,6 @@ export class BlockchainService {
     this.contractAddress = process.env.SOROBAN_CONTRACT_ADDRESS || null;
     this.rpcUrl =
       process.env.SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
-    this.sourceSecret = process.env.STELLAR_SECRET_KEY;
     this.networkPassphrase =
       process.env.STELLAR_NETWORK_PASSPHRASE || Networks.TESTNET;
 
@@ -429,12 +428,15 @@ export class BlockchainService {
     if (!this.contractAddress) {
       throw new Error("SOROBAN_CONTRACT_ADDRESS not configured");
     }
-    if (!this.sourceSecret) {
+    const rpc = new SorobanRpc.Server(this.rpcUrl);
+    
+    // Fetch secret from provider
+    const secret = await secretProvider.getSecret("STELLAR_SECRET_KEY");
+    if (!secret) {
       throw new Error("STELLAR_SECRET_KEY not configured");
     }
-
-    const rpc = new SorobanRpc.Server(this.rpcUrl);
-    const sourceKeypair = Keypair.fromSecret(this.sourceSecret);
+    
+    const sourceKeypair = Keypair.fromSecret(secret);
     const contract = new Contract(this.contractAddress);
 
     let lastErr: unknown = null;

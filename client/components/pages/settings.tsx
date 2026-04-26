@@ -589,6 +589,35 @@ export default function SettingsPage({
         </div>
       </div>
 
+      {/* Onboarding & Help */}
+      <div className={`border rounded-xl p-6 ${darkMode ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`}>
+        <h3 className={`text-lg font-semibold mb-4 ${darkMode ? "text-white" : "text-gray-900"}`}>Onboarding & Help</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`font-medium ${darkMode ? "text-white" : "text-gray-900"}`}>Restart Onboarding Tour</p>
+              <p className={`text-sm ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+                Take the guided 3-step, 2-minute tour to learn about key features: Add Subscriptions, Connect Email, and Set Wallet
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("onboarding-tour-completed");
+                localStorage.removeItem("onboarding-tour-skipped");
+                window.location.reload();
+              }}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                darkMode
+                  ? "bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"
+                  : "bg-[#1E2A35] text-white hover:bg-[#2D3748]"
+              }`}
+            >
+              Restart Tour
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Payment History */}
       <div className={`border rounded-xl p-6 ${darkMode ? "bg-gray-900 border-gray-800" : "bg-white border-gray-200"}`}>
         <h3 className={`text-lg font-semibold mb-4 flex items-center gap-2 ${darkMode ? "text-white" : "text-gray-900"}`}>

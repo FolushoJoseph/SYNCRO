@@ -151,6 +151,31 @@ export class RateLimiterFactory {
   }
 
   /**
+   * Create rate limiter for simulation endpoints
+   * 5 requests per hour per user
+   */
+  static createSimulationLimiter(): RateLimitRequestHandler {
+    return rateLimit({
+      windowMs: rateLimitConfig.simulation.windowMs,
+      max: rateLimitConfig.simulation.max,
+      message: rateLimitConfig.simulation.message,
+      standardHeaders: true,
+      legacyHeaders: true,
+      validate: false,
+      keyGenerator: userKeyGenerator,
+      store: this.redisStore || undefined,
+      handler: (req, res, _next) => {
+        createRateLimitHandler('simulation')(req, res);
+        res.status(429).json(rateLimitConfig.simulation.message);
+      },
+      skip: (req) => {
+        const authReq = req as AuthenticatedRequest;
+        return !authReq.user?.id;
+      },
+    });
+  }
+
+  /**
    * Create a generic rate limiter with custom configuration
    */
   static createCustomLimiter(config: {
@@ -191,3 +216,4 @@ export class RateLimiterFactory {
 export const createTeamInviteLimiter = () => RateLimiterFactory.createTeamInviteLimiter();
 export const createMfaLimiter = () => RateLimiterFactory.createMfaLimiter();
 export const createAdminLimiter = () => RateLimiterFactory.createAdminLimiter();
+export const createSimulationLimiter = () => RateLimiterFactory.createSimulationLimiter();

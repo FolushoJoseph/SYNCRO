@@ -13,6 +13,8 @@ import {
 import { calculateBackoffDelay } from '../utils/retry';
 import { userPreferenceService } from './user-preference-service';
 import { notificationPreferenceService } from './notification-preference-service';
+import { quietHoursService } from './quiet-hours-service';
+import { delayedNotificationService } from './delayed-notification-service';
 
 export interface ReminderEngineOptions {
   defaultDaysBefore?: number[];
@@ -69,6 +71,78 @@ export class ReminderEngine {
     } catch (error) {
       logger.error('Error processing reminders:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Process delayed notifications that are ready to be sent
+   */
+  async processDelayedNotifications(): Promise<void> {
+    logger.info('Processing delayed notifications');
+
+    try {
+      const delayedNotifications = await delayedNotificationService.getPendingDelayedNotifications();
+
+      if (delayedNotifications.length === 0) {
+        logger.info('No delayed notifications ready to be sent');
+        return;
+      }
+
+      logger.info(`Found ${delayedNotifications.length} delayed notifications to process`);
+
+      for (const delayedNotification of delayedNotifications) {
+        try {
+          // Check if it's an appropriate time to send delayed notifications
+          const userPreferences = await userPreferenceService.getPreferences(delayedNotification.user_id);
+          
+          if (!quietHoursService.isAppropriateTimeForDelayedNotifications(userPreferences)) {
+            logger.debug(`Skipping delayed notification ${delayedNotification.id} - not appropriate time`);
+            continue;
+          }
+
+          // Send the delayed notification
+          await this.sendDelayedNotification(delayedNotification);
+          
+          // Mark as sent
+          await delayedNotificationService.markDelayedNotificationAsSent(delayedNotification.id);
+          
+          logger.info(`Delayed notification ${delayedNotification.id} sent successfully`);
+        } catch (error) {
+          logger.error(`Failed to process delayed notification ${delayedNotification.id}:`, error);
+        }
+      }
+    } catch (error) {
+      logger.error('Error processing delayed notifications:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send a delayed notification
+   */
+  private async sendDelayedNotification(delayedNotification: any): Promise<void> {
+    const payload = delayedNotification.notification_payload;
+    const userPreferences = await userPreferenceService.getPreferences(delayedNotification.user_id);
+    
+    // Get user profile for email
+    const userProfile = await this.getUserProfile(delayedNotification.user_id);
+    if (!userProfile) {
+      throw new Error('User profile not found');
+    }
+
+    const deliveryChannels = userPreferences.notification_channels;
+
+    // Email delivery
+    if (deliveryChannels.includes('email') && userPreferences.email_opt_ins.reminders) {
+      await emailService.sendReminderEmail(userProfile.email, payload, { maxAttempts: 1 });
+    }
+
+    // Push delivery
+    if (deliveryChannels.includes('push')) {
+      const pushSubscription = await this.getPushSubscription(delayedNotification.user_id);
+      if (pushSubscription) {
+        await pushService.sendPushNotification(pushSubscription, payload, { maxAttempts: 1 });
+      }
     }
   }
 
@@ -244,9 +318,39 @@ export class ReminderEngine {
         renewalDate,
       };
 
-      const preferences = await userPreferenceService.getPreferences(reminder.user_id);
-      const deliveryChannels = preferences.notification_channels;
+      // Determine notification priority
+      payload.priority = quietHoursService.determineNotificationPriority(payload);
 
+      const preferences = await userPreferenceService.getPreferences(reminder.user_id);
+      
+      // Check quiet hours
+      const quietHoursCheck = quietHoursService.shouldSendDuringQuietHours(preferences, payload);
+      
+      if (quietHoursCheck.shouldDelay) {
+        // Store notification for later delivery
+        await delayedNotificationService.storeDelayedNotification(
+          reminder.user_id,
+          reminder.id,
+          payload,
+          quietHoursCheck.delayUntil!,
+          payload.priority!,
+          quietHoursCheck.reason
+        );
+        
+        // Mark reminder as sent (it's scheduled for later)
+        await supabase
+          .from('reminder_schedules')
+          .update({
+            status: 'sent',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', reminder.id);
+          
+        logger.info(`Reminder ${reminder.id} delayed due to quiet hours until ${quietHoursCheck.delayUntil?.toISOString()}`);
+        return;
+      }
+
+      const deliveryChannels = preferences.notification_channels;
       const deliveries: NotificationDelivery[] = [];
 
       // Email delivery
@@ -306,8 +410,6 @@ export class ReminderEngine {
           );
         }
       }
-
-
 
       await blockchainService.logReminderEvent(
         reminder.user_id,
@@ -387,7 +489,6 @@ export class ReminderEngine {
         if (!result.success && result.metadata?.retryable === false) {
           await this.removeStalePushSubscription(delivery.user_id);
         }
-
       } else {
         await this.markDeliveryAsFailed(delivery.id, `Unknown channel: ${delivery.channel}`);
         return;
@@ -560,28 +661,18 @@ export class ReminderEngine {
 
   private async getSubscription(id: string): Promise<Subscription | null> {
     const { data, error } = await supabase
-
-export class ReminderEngine {
-  async processReminders(): Promise<void> {
-    logger.info('ReminderEngine.processReminders noop');
-  }
-
-  async scheduleReminders(daysBefore: number[] = [7, 3, 1]): Promise<void> {
-    const start = Date.now();
-    // Fetch active subscriptions with upcoming activity (shape matches tests' mocks)
-    const { data: subscriptions } = await (supabase as any)
       .from('subscriptions')
       .select('*')
-      .eq('status', 'active')
-      .not('next_billing_date', 'is', null)
-      .gt('active_until', new Date(0).toISOString()); // value ignored by test mock
+      .eq('id', id)
+      .single();
 
-    const subs = (subscriptions as any[]) || [];
-    const userIds = Array.from(new Set(subs.map(s => s.user_id)));
+    if (error || !data) return null;
+    return data as Subscription;
+  }
 
-    // Batch fetch preferences for involved users
-    const { data: preferences } = await (supabase as any)
-      .from('user_preferences')
+  private async getUserProfile(userId: string): Promise<UserProfile | null> {
+    const { data, error } = await supabase
+      .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
@@ -677,27 +768,9 @@ export class ReminderEngine {
         logger.warn(`Failed to remove stale push subscriptions for user ${userId}:`, error);
       } else {
         logger.info(`Removed stale push subscriptions for user ${userId}`);
-      .in('user_id', userIds);
-
-    const prefsByUser = new Map<string, { reminder_timing?: number[] }>();
-    (preferences as any[] || []).forEach(p => {
-      prefsByUser.set(p.user_id, p);
-    });
-
-    // Build reminder schedule rows
-    const rows: any[] = [];
-    for (const sub of subs) {
-      const timing: number[] = prefsByUser.get(sub.user_id)?.reminder_timing ?? daysBefore;
-      for (const d of timing) {
-        rows.push({
-          subscription_id: sub.id,
-          user_id: sub.user_id,
-          reminder_date: new Date().toISOString(), // value not asserted in tests
-          days_before: d,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
       }
+    } catch (err) {
+      logger.error(`Unexpected error removing stale push subscriptions for user ${userId}:`, err);
     }
   }
 
@@ -749,15 +822,32 @@ export class ReminderEngine {
       .update(updateData)
       .eq('id', deliveryId);
 
-    await (supabase as any)
-      .from('reminder_schedules')
-      .upsert(rows, { onConflict: 'subscription_id,reminder_date' });
-
-    logger.info(`Reminder scheduling completed in ${Date.now() - start}ms`);
+    if (error) throw error;
   }
 
-  async processRetries(): Promise<void> {
-    logger.info('ReminderEngine.processRetries noop');
+  private async markReminderAsFailed(reminderId: string, reason: string): Promise<void> {
+    await supabase
+      .from('reminder_schedules')
+      .update({
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', reminderId);
+
+    logger.warn(`Marked reminder ${reminderId} as failed: ${reason}`);
+  }
+
+  private async markDeliveryAsFailed(deliveryId: string, reason: string): Promise<void> {
+    await supabase
+      .from('notification_deliveries')
+      .update({
+        status: 'failed',
+        error_message: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', deliveryId);
+
+    logger.warn(`Marked delivery ${deliveryId} as failed: ${reason}`);
   }
 }
 

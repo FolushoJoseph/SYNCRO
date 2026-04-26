@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { apiGet } from "../lib/api";
 import { useUndoManager } from "@/hooks/use-undo-manager";
 import type { Subscription as DBSubscription } from "@/lib/supabase/subscriptions";
 import {
   createSubscription,
   updateSubscription,
-  deleteSubscription,
+  deleteSubscription as dbDeleteSubscription,
   bulkDeleteSubscriptions,
 } from "@/lib/supabase/subscriptions";
 import { retryWithBackoff, getErrorMessage } from "@/lib/network-utils";
@@ -21,6 +21,7 @@ interface UseSubscriptionsProps {
   onToast: (toast: any) => void;
   onUpgradePlan: () => void;
   onShowDialog?: (dialog: any) => void;
+  onDeleteWithUndo?: (subscription: DBSubscription) => void;
 }
 
 export function useSubscriptions({
@@ -30,6 +31,7 @@ export function useSubscriptions({
   onToast,
   onUpgradePlan,
   onShowDialog,
+  onDeleteWithUndo,
 }: UseSubscriptionsProps) {
   const {
     currentState: subscriptions,
@@ -247,8 +249,11 @@ export function useSubscriptions({
       const sub = subscriptions.find((s) => s.id === id);
       if (!sub) return;
 
-      try {
-        await deleteSubscription(id);
+      let deletedSubToRestore: DBSubscription | null = null;
+
+      if (onDeleteWithUndo) {
+        onDeleteWithUndo(sub);
+        deletedSubToRestore = sub;
         const updatedSubs = subscriptions.filter((s) => s.id !== id);
         updateSubscriptions(updatedSubs);
 
@@ -256,16 +261,42 @@ export function useSubscriptions({
           title: "Subscription deleted",
           description: `${sub.name} has been removed`,
           variant: "success",
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              if (deletedSubToRestore) {
+                const restoredSubs = [...subscriptions, deletedSubToRestore];
+                updateSubscriptions(restoredSubs);
+                onToast({
+                  title: "Restored",
+                  description: `${deletedSubToRestore.name} has been restored`,
+                  variant: "success",
+                });
+              }
+            },
+          },
         });
-      } catch (error) {
-        onToast({
-          title: "Error",
-          description: "Failed to delete subscription",
-          variant: "error",
-        });
+      } else {
+        try {
+          await dbDeleteSubscription(id);
+          const updatedSubs = subscriptions.filter((s) => s.id !== id);
+          updateSubscriptions(updatedSubs);
+
+          onToast({
+            title: "Subscription deleted",
+            description: `${sub.name} has been removed`,
+            variant: "success",
+          });
+        } catch (error) {
+          onToast({
+            title: "Error",
+            description: "Failed to delete subscription",
+            variant: "error",
+          });
+        }
       }
     },
-    [subscriptions, updateSubscriptions, onToast]
+    [subscriptions, updateSubscriptions, onToast, onDeleteWithUndo]
   );
 
   const handleEditSubscription = useCallback(

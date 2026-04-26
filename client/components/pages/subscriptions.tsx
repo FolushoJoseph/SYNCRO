@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { Edit2, Trash2, Mail, Clock, Copy, Lock, Users, Calendar, Check, Download, FileText, Upload, PauseCircle, PlayCircle } from "lucide-react"
+import { Edit2, Trash2, Mail, Clock, Copy, Lock, Users, Calendar, Check, Download, FileText, Upload, PauseCircle, PlayCircle, AlertTriangle, ShieldAlert, AlertCircle } from "lucide-react"
 import { exportAllCSV, exportActiveCSV, exportDateRangeCSV } from "@/lib/csv-export"
 import { downloadSubscriptionPDF } from "@/lib/pdf-report"
 import CSVImportModal from "@/components/modals/csv-import-modal"
@@ -32,6 +32,8 @@ interface SubscriptionsPageProps {
   onImportComplete?: () => void
   onPause?: (subscription: any) => void
   onResume?: (subscription: any) => void
+  onCancelTrial?: (id: number) => void
+  onConvertTrial?: (id: number) => void
 }
 
 export default function SubscriptionsPage({
@@ -50,6 +52,8 @@ export default function SubscriptionsPage({
   onImportComplete,
   onPause,
   onResume,
+  onCancelTrial,
+  onConvertTrial,
 }: SubscriptionsPageProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const debouncedSearchTerm = useDebounce(searchTerm, 300)
@@ -504,26 +508,6 @@ export default function SubscriptionsPage({
                       </p>
                       <p className={`text-xs ${darkMode ? "text-gray-400" : "text-gray-500"}`}>remaining</p>
                     </div>
-                    {onCancelTrial && (
-                      <button
-                        onClick={() => onCancelTrial(sub.id)}
-                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors"
-                        aria-label={`Cancel ${sub.name} trial`}
-                      >
-                        <X aria-hidden="true" className="w-4 h-4" />
-                        Cancel Trial
-                      </button>
-                    )}
-                    {onConvertTrial && (
-                      <button
-                        onClick={() => onConvertTrial(sub.id)}
-                        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${darkMode ? "bg-[#2D3748] hover:bg-[#374151] text-white" : "bg-white hover:bg-gray-50 text-gray-900 border border-gray-200"}`}
-                        aria-label={`Keep ${sub.name} subscription`}
-                      >
-                        <Check aria-hidden="true" className="w-4 h-4" />
-                        Convert to Paid
-                      </button>
-                    )}
                   </div>
                 </div>
               )
@@ -556,6 +540,8 @@ export default function SubscriptionsPage({
                     unusedInfo={unusedSubscriptions.find((unused: any) => unused.id === sub.id)}
                     onPause={onPause}
                     onResume={onResume}
+                    onCancelTrial={onCancelTrial}
+                    onConvertTrial={onConvertTrial}
                   />
                 </ErrorBoundary>
               )}
@@ -576,23 +562,14 @@ export default function SubscriptionsPage({
                     darkMode={darkMode}
                     isDuplicate={duplicates.some((dup: any) => dup.subscriptions.some((s: any) => s.id === sub.id))}
                     unusedInfo={unusedSubscriptions.find((unused: any) => unused.id === sub.id)}
+                    onCancel={(s) => setSelectedSubForCancel(s)}
+                    guide={guides.find((g) => g.service_name.toLowerCase() === sub.name.toLowerCase())}
                     onPause={onPause}
                     onResume={onResume}
+                    onCancelTrial={onCancelTrial}
+                    onConvertTrial={onConvertTrial}
                   />
                 </ErrorBoundary>
-                  subscription={sub}
-                  onDelete={onDelete}
-                  onManage={onManage}
-                  selectedSubscriptions={selectedSubscriptions}
-                  onToggleSelect={onToggleSelect}
-                  darkMode={darkMode}
-                  isDuplicate={duplicates.some((dup: any) => dup.subscriptions.some((s: any) => s.id === sub.id))}
-                  unusedInfo={unusedSubscriptions.find((unused: any) => unused.id === sub.id)}
-                  onCancel={(s) => setSelectedSubForCancel(s)}
-                  guide={guides.find((g) => g.service_name.toLowerCase() === sub.name.toLowerCase())}
-                  onPause={onPause}
-                  onResume={onResume}
-                />
               ))}
             </div>
           )}
@@ -728,6 +705,8 @@ interface SubscriptionCardProps {
   guide?: CancellationGuide
   onPause?: (subscription: any) => void
   onResume?: (subscription: any) => void
+  onCancelTrial?: (id: number) => void
+  onConvertTrial?: (id: number) => void
 }
 
 export function SubscriptionCard({
@@ -743,6 +722,8 @@ export function SubscriptionCard({
   guide,
   onPause,
   onResume,
+  onCancelTrial,
+  onConvertTrial,
 }: SubscriptionCardProps) {
   const isPaused = sub.status === "paused"
 
@@ -902,26 +883,6 @@ export function SubscriptionCard({
 
 
         <div className="flex gap-2" role="group" aria-label={`Actions for ${sub.name}`}>
-          {sub.isTrial && onCancelTrial && (
-            <button
-              onClick={() => onCancelTrial(sub.id)}
-              aria-label={`Cancel ${sub.name} trial`}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors"
-            >
-              <X aria-hidden="true" className="w-3 h-3" />
-              Cancel Trial
-            </button>
-          )}
-          {sub.isTrial && onConvertTrial && (
-            <button
-              onClick={() => onConvertTrial(sub.id)}
-              aria-label={`Keep ${sub.name} subscription`}
-              className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors ${darkMode ? "bg-[#2D3748] hover:bg-[#374151] text-white" : "bg-gray-100 hover:bg-gray-200 text-gray-700"}`}
-            >
-              <Check aria-hidden="true" className="w-3 h-3" />
-              Keep
-            </button>
-          )}
           <button
             onClick={() => onManage && onManage(sub)}
             aria-label={`Edit ${sub.name}`}

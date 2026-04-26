@@ -22,6 +22,8 @@ interface AppLayoutProps {
     onMobileMenuToggle: () => void;
     unreadNotifications: number;
     onNotificationsToggle: () => void;
+    deletedCount?: number;
+    onDeletedToggle?: () => void;
     onAddSubscription?: () => void;
     budgetAlert?: {
         level: "critical" | "warning";
@@ -56,6 +58,8 @@ export function AppLayout({
     onMobileMenuToggle,
     unreadNotifications,
     onNotificationsToggle,
+    deletedCount = 0,
+    onDeletedToggle,
     onAddSubscription,
     budgetAlert,
     selectedSubscriptionsCount,
@@ -114,6 +118,8 @@ export function AppLayout({
                         onDarkModeToggle={onDarkModeToggle}
                         unreadNotifications={unreadNotifications}
                         onNotificationsToggle={onNotificationsToggle}
+                        deletedCount={deletedCount}
+                        onDeletedToggle={onDeletedToggle}
                         onAddSubscription={onAddSubscription}
                     />
 
@@ -143,4 +149,3 @@ export function AppLayout({
         </div>
     );
 }
-

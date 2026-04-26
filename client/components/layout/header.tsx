@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Moon, Sun, Plus } from "lucide-react";
+import { Bell, Moon, Sun, Plus, Trash2 } from "lucide-react";
 
 interface HeaderProps {
     activeView: string;
@@ -8,6 +8,8 @@ interface HeaderProps {
     onDarkModeToggle: () => void;
     unreadNotifications: number;
     onNotificationsToggle: () => void;
+    deletedCount?: number;
+    onDeletedToggle?: () => void;
     onAddSubscription?: () => void;
 }
 
@@ -44,6 +46,8 @@ export function Header({
     onDarkModeToggle,
     unreadNotifications,
     onNotificationsToggle,
+    deletedCount = 0,
+    onDeletedToggle,
     onAddSubscription,
 }: HeaderProps) {
     const viewInfo = viewTitles[activeView] || { title: "", description: "" };
@@ -109,9 +113,26 @@ export function Header({
                         </span>
                     )}
                 </button>
+                {onDeletedToggle && (
+                    <button
+                        onClick={onDeletedToggle}
+                        className={`p-2 ${
+                            darkMode ? "hover:bg-[#2D3748]" : "hover:bg-gray-100"
+                        } rounded-lg relative transition-colors`}
+                        aria-label={`Recently deleted (${deletedCount})`}
+                    >
+                        <Trash2 className="w-5 h-5" />
+                        {deletedCount > 0 && (
+                            <span className="absolute top-1 right-1 bg-[#E86A33] text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                {deletedCount}
+                            </span>
+                        )}
+                    </button>
+                )}
                 {activeView === "subscriptions" && onAddSubscription && (
                     <button
                         onClick={onAddSubscription}
+                        data-tour="add-subscription"
                         className={`flex items-center gap-2 ${
                             darkMode
                                 ? "bg-[#FFD166] text-[#1E2A35] hover:bg-[#FFD166]/90"

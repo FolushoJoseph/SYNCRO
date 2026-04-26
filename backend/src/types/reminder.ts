@@ -68,6 +68,8 @@ export interface UserProfile {
   currency: string;
 }
 
+export type NotificationPriority = 'low' | 'normal' | 'high' | 'critical';
+
 export interface NotificationPayload {
   title: string;
   body: string;
@@ -75,6 +77,7 @@ export interface NotificationPayload {
   reminderType: ReminderSchedule['reminder_type'];
   daysBefore: number;
   renewalDate: string;
+  priority?: NotificationPriority;
 }
 
 export interface DeliveryResult {
@@ -97,6 +100,11 @@ export interface UserPreferences {
     auto_retry: boolean;
   };
   risk_notification_threshold?: 'LOW' | 'MEDIUM' | 'HIGH';
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string; // HH:MM format
+  quiet_hours_end: string; // HH:MM format
+  quiet_hours_timezone: string; // IANA timezone identifier
+  critical_alerts_only: boolean;
   updated_at: string;
 }
 
