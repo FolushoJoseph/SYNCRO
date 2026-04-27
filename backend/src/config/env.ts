@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import logger from './logger';
 
 const envSchema = z.object({
   // Server
@@ -83,7 +84,7 @@ function validateEnv() {
       .map((issue) => `  - ${issue.message || issue.path.join('.')}`)
       .join('\n');
 
-    console.error(`\n❌ Environment validation failed:\n${errors}\n`);
+    logger.error(`\n❌ Environment validation failed:\n${errors}\n`);
     process.exit(1);
   }
 

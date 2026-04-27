@@ -34,20 +34,26 @@ jobs:
         working-directory: client
         run: npx playwright install --with-deps
 
-      - name: Verify preview deployment URL is available
-        env:
-          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+      - name: Wait for Vercel deployment
+        id: vercel
+        uses: vercel/action@v1
+        with:
+          alias: pr-${{ github.event.number }}
+
+      - name: Get preview URL
+        id: preview
         run: |
-          if [ -z "$E2E_BASE_URL" ]; then
-            echo "Missing E2E_BASE_URL secret. Set it to your Vercel preview deployment URL pattern for PR testing."
-            exit 1
+          if [ -n "${{ secrets.E2E_BASE_URL }}" ]; then
+            echo "E2E_BASE_URL=${{ secrets.E2E_BASE_URL }}" >> $GITHUB_OUTPUT
+          else
+            echo "E2E_BASE_URL=https://pr-${{ github.event.number }}--syncro.vercel.app" >> $GITHUB_OUTPUT
           fi
 
       - name: Run Playwright tests
         working-directory: client
         env:
           CI: true
-          E2E_BASE_URL: ${{ secrets.E2E_BASE_URL }}
+          E2E_BASE_URL: ${{ steps.preview.outputs.E2E_BASE_URL }}
         run: npx playwright test
 
       - name: Upload Playwright report
