@@ -13,6 +13,7 @@ import {
 import { calculateBackoffDelay } from '../utils/retry';
 import { userPreferenceService } from './user-preference-service';
 import { notificationPreferenceService } from './notification-preference-service';
+import { reminderSettingsService } from './reminder-settings-service';
 import { quietHoursService } from './quiet-hours-service';
 import { delayedNotificationService } from './delayed-notification-service';
 
@@ -639,8 +640,9 @@ export class ReminderEngine {
     // 2. User global settings
     try {
       const userPrefs = await userPreferenceService.getPreferences(userId);
+      const reminderSettings = await reminderSettingsService.getSettings(userId);
       return {
-        reminder_days_before: userPrefs.reminder_timing ?? this.defaultDaysBefore,
+        reminder_days_before: reminderSettings.reminder_days_before,
         channels: userPrefs.notification_channels ?? ['email'],
         muted: false,
       };
