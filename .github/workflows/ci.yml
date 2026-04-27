@@ -128,6 +128,35 @@ jobs:
   # Job 3: Run backend tests
   # Only runs if validate-env passes.
   # ──────────────────────────────────────────────
+  test-client:
+    name: Test Client
+    runs-on: ubuntu-latest
+    needs: [validate-env, security-audit]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - name: Install client dependencies
+        working-directory: client
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Run client unit tests
+        working-directory: client
+        run: pnpm test
+
   test-backend:
     name: Test Backend
     runs-on: ubuntu-latest
