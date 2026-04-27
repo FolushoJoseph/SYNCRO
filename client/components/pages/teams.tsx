@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Users, Plus, Search, Trash2, TrendingUp, Activity, Mail, Briefcase, User, DollarSign } from "lucide-react"
+import { Users, Plus, Search, Trash2, TrendingUp, Activity, Mail, Briefcase, User, DollarSign, Slack } from "lucide-react"
 import { showToast } from "@/components/ui/toast"
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge"
 import { TeamMember, Workspace, TeamSubscription, EmailAccount } from "@/lib/types"
@@ -18,6 +18,32 @@ export default function TeamsPage({ workspace, subscriptions, darkMode, emailAcc
   const [searchQuery, setSearchQuery] = useState("")
   const [activeTab, setActiveTab] = useState<"members" | "usage" | "emails">("members")
   const [showWorkEmailsOnly, setShowWorkEmailsOnly] = useState(true)
+
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState(workspace?.slack_webhook_url ?? "")
+  const [savingSlack, setSavingSlack] = useState(false)
+
+  const handleSaveSlackWebhook = async () => {
+    if (slackWebhookUrl && !slackWebhookUrl.startsWith("https://hooks.slack.com/")) {
+      showToast({ title: "Invalid URL", description: "Must be a valid Slack webhook URL.", variant: "error" })
+      return
+    }
+    setSavingSlack(true)
+    try {
+      const res = await fetch("/api/team/slack-webhook", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slack_webhook_url: slackWebhookUrl || null }),
+      })
+      if (!res.ok) throw new Error("Failed")
+      showToast({ title: "Saved", description: "Slack webhook updated.", variant: "success" })
+    } catch {
+      showToast({ title: "Error", description: "Could not save webhook.", variant: "error" })
+    } finally {
+      setSavingSlack(false)
+    }
+  }
+
+  const isAdmin = members.some((m: any) => m.email === workspace?.currentUserEmail && m.role === "Admin")
 
   const [teamSettings, setTeamSettings] = useState({
     spendingLimit: 1000,
@@ -368,6 +394,39 @@ export default function TeamsPage({ workspace, subscriptions, darkMode, emailAcc
           </div>
         </div>
       </div>
+
+      {/* Slack Alerts — admin only */}
+      {isAdmin && (
+        <div
+          className={`${darkMode ? "bg-[#2D3748]" : "bg-white"} p-6 rounded-xl border ${darkMode ? "border-gray-700" : "border-gray-200"}`}
+        >
+          <div className="flex items-center gap-2 mb-4">
+            <Slack className={`w-5 h-5 ${darkMode ? "text-[#FFD166]" : "text-[#1E2A35]"}`} />
+            <h3 className={`text-lg font-semibold ${darkMode ? "text-white" : "text-[#1E2A35]"}`}>Slack Alerts</h3>
+          </div>
+          <p className={`text-sm mb-3 ${darkMode ? "text-gray-400" : "text-gray-600"}`}>
+            Paste a Slack Incoming Webhook URL to receive budget and team alerts in a channel (e.g. #accounting).
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="url"
+              value={slackWebhookUrl}
+              onChange={(e) => setSlackWebhookUrl(e.target.value)}
+              placeholder="https://hooks.slack.com/services/..."
+              className={`flex-1 px-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FFD166] ${
+                darkMode ? "bg-[#1E2A35] border-gray-700 text-white" : "bg-white border-gray-200 text-[#1E2A35]"
+              }`}
+            />
+            <button
+              onClick={handleSaveSlackWebhook}
+              disabled={savingSlack}
+              className="px-4 py-2 bg-[#007A5C] text-white rounded-lg text-sm font-medium hover:bg-[#007A5C]/90 disabled:opacity-50"
+            >
+              {savingSlack ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tab Buttons and Work Email Filter Toggle */}
       <div className="flex items-center justify-between">
