@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { apiGet } from "../lib/api";
 import { useUndoManager } from "@/hooks/use-undo-manager";
 import type { Subscription as DBSubscription } from "@/lib/supabase/subscriptions";
 import {
   createSubscription,
   updateSubscription,
-  deleteSubscription,
+  deleteSubscription as dbDeleteSubscription,
   bulkDeleteSubscriptions,
 } from "@/lib/supabase/subscriptions";
 import { retryWithBackoff, getErrorMessage } from "@/lib/network-utils";
@@ -21,6 +21,7 @@ interface UseSubscriptionsProps {
   onToast: (toast: any) => void;
   onUpgradePlan: () => void;
   onShowDialog?: (dialog: any) => void;
+  onDeleteWithUndo?: (subscription: DBSubscription) => void;
 }
 
 export function useSubscriptions({
@@ -30,6 +31,7 @@ export function useSubscriptions({
   onToast,
   onUpgradePlan,
   onShowDialog,
+  onDeleteWithUndo,
 }: UseSubscriptionsProps) {
   const {
     currentState: subscriptions,
@@ -72,6 +74,7 @@ export function useSubscriptions({
           editedFields: dbSub.edited_fields || dbSub.editedFields || [],
           pricingType: dbSub.pricing_type || dbSub.pricingType || "fixed",
           billingCycle: dbSub.billing_cycle || dbSub.billingCycle || "monthly",
+          expiredAt: dbSub.expired_at || dbSub.expiredAt,
         }));
 
         if (items.length > 0) {
@@ -246,8 +249,11 @@ export function useSubscriptions({
       const sub = subscriptions.find((s) => s.id === id);
       if (!sub) return;
 
-      try {
-        await deleteSubscription(id);
+      let deletedSubToRestore: DBSubscription | null = null;
+
+      if (onDeleteWithUndo) {
+        onDeleteWithUndo(sub);
+        deletedSubToRestore = sub;
         const updatedSubs = subscriptions.filter((s) => s.id !== id);
         updateSubscriptions(updatedSubs);
 
@@ -255,16 +261,42 @@ export function useSubscriptions({
           title: "Subscription deleted",
           description: `${sub.name} has been removed`,
           variant: "success",
+          action: {
+            label: "Undo",
+            onClick: async () => {
+              if (deletedSubToRestore) {
+                const restoredSubs = [...subscriptions, deletedSubToRestore];
+                updateSubscriptions(restoredSubs);
+                onToast({
+                  title: "Restored",
+                  description: `${deletedSubToRestore.name} has been restored`,
+                  variant: "success",
+                });
+              }
+            },
+          },
         });
-      } catch (error) {
-        onToast({
-          title: "Error",
-          description: "Failed to delete subscription",
-          variant: "error",
-        });
+      } else {
+        try {
+          await dbDeleteSubscription(id);
+          const updatedSubs = subscriptions.filter((s) => s.id !== id);
+          updateSubscriptions(updatedSubs);
+
+          onToast({
+            title: "Subscription deleted",
+            description: `${sub.name} has been removed`,
+            variant: "success",
+          });
+        } catch (error) {
+          onToast({
+            title: "Error",
+            description: "Failed to delete subscription",
+            variant: "error",
+          });
+        }
       }
     },
-    [subscriptions, updateSubscriptions, onToast]
+    [subscriptions, updateSubscriptions, onToast, onDeleteWithUndo]
   );
 
   const handleEditSubscription = useCallback(
@@ -375,90 +407,103 @@ export function useSubscriptions({
     [subscriptions, updateSubscriptions, addToHistory, onToast]
   );
 
-  const handlePauseSubscription = useCallback(
-    async (id: number, resumeDate?: Date) => {
-      const sub = subscriptions.find((s) => s.id === id);
-      if (!sub) return;
+const handlePauseSubscription = useCallback(
+  async (id: number, resumeDate?: Date) => {
+    const sub = subscriptions.find((s) => s.id === id);
+    if (!sub) return;
 
-      try {
-        const resumesAt = resumeDate
-          ? resumeDate.toISOString()
-          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const resumeAt = resumeDate
+        ? resumeDate.toISOString()
+        : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-        await updateSubscription(id, {
-          status: "paused",
-          paused_at: new Date().toISOString(),
-          resumes_at: resumesAt,
-        });
+      const response = await fetch(`/api/subscriptions/${id}/pause`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeAt, reason: "User requested pause" }),
+      });
 
-        const updatedSubs = subscriptions.map((s) =>
-          s.id === id
-            ? {
-                ...s,
-                status: "paused",
-                pausedAt: new Date().toISOString(),
-                resumesAt: resumesAt,
-              }
-            : s
-        );
-
-        updateSubscriptions(updatedSubs);
-        addToHistory(updatedSubs);
-
-        onToast({
-          title: "Subscription paused",
-          description: "The subscription has been paused",
-          variant: "success",
-        });
-      } catch (error) {
-        onToast({
-          title: "Error",
-          description: "Failed to pause subscription",
-          variant: "error",
-        });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to pause subscription");
       }
-    },
-    [subscriptions, updateSubscriptions, addToHistory, onToast]
-  );
 
-  const handleResumeSubscription = useCallback(
-    async (id: number) => {
-      try {
-        await updateSubscription(id, {
-          status: "active",
-          paused_at: undefined,
-          resumes_at: undefined,
-        });
+      const updatedSubs = subscriptions.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              status: "paused",
+              pausedAt: new Date().toISOString(),
+              resumesAt: resumeAt,
+            }
+          : s
+      );
 
-        const updatedSubs = subscriptions.map((s) =>
-          s.id === id
-            ? {
-                ...s,
-                status: "active",
-                pausedAt: undefined,
-                resumesAt: undefined,
-              }
-            : s
-        );
+      updateSubscriptions(updatedSubs);
+      addToHistory(updatedSubs);
 
-        updateSubscriptions(updatedSubs);
-        addToHistory(updatedSubs);
+      onToast({
+        title: "Subscription paused",
+        description: "The subscription has been paused",
+        variant: "success",
+      });
+    } catch (error) {
+      onToast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to pause subscription",
+        variant: "error",
+      });
+    }
+  },
+  [subscriptions, updateSubscriptions, addToHistory, onToast]
+);
 
-        onToast({
-          title: "Subscription resumed",
-          description: "The subscription has been resumed",
-          variant: "success",
-        });
-      } catch (error) {
-        onToast({
-          title: "Error",
-          description: "Failed to resume subscription",
-          variant: "error",
-        });
+const handleResumeSubscription = useCallback(
+  async (id: number) => {
+    const sub = subscriptions.find((s) => s.id === id);
+    if (!sub) return;
+
+    try {
+      const response = await fetch(`/api/subscriptions/${id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to resume subscription");
       }
-    },
-    [subscriptions, updateSubscriptions, addToHistory, onToast]
-  );
+
+      const updatedSubs = subscriptions.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              status: "active",
+              pausedAt: undefined,
+              resumesAt: undefined,
+            }
+          : s
+      );
+
+      updateSubscriptions(updatedSubs);
+      addToHistory(updatedSubs);
+
+      onToast({
+        title: "Subscription resumed",
+        description: "The subscription has been resumed",
+        variant: "success",
+      });
+    } catch (error) {
+      onToast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to resume subscription",
+        variant: "error",
+      });
+    }
+  },
+  [subscriptions, updateSubscriptions, addToHistory, onToast]
+);
 
   const handleToggleSubscriptionSelect = useCallback((id: number) => {
     setSelectedSubscriptions((prev) => {

@@ -1,52 +1,66 @@
-import { type NextRequest, NextResponse } from "next/server"
-import Stripe from "stripe"
+import { type NextRequest } from "next/server"
+import { createApiRoute, createSuccessResponse, validateRequestBody, RateLimiters, ApiErrors } from "@/lib/api/index"
+import { HttpStatus } from "@/lib/api/types"
+import { z } from "zod"
+import { PaymentService } from "@/lib/payment-service"
 
-function getStripeClient() {
-  const apiKey = process.env.STRIPE_SECRET_KEY
-  if (!apiKey) {
-    throw new Error("STRIPE_SECRET_KEY environment variable is not set")
-  }
-  return new Stripe(apiKey)
-}
+// Validation schema
+const paymentSchema = z.object({
+  amount: z.number().positive("Amount must be positive"),
+  currency: z
+    .string()
+    .length(3, "Currency must be 3 characters")
+    .default("usd"),
+  token: z.string().min(1, "Payment token is required"),
+  planName: z.string().min(1, "Plan name is required"),
+  provider: z.enum(["stripe", "paypal", "mock"]).default("stripe"),
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const stripe = getStripeClient()
-    const body = await request.json()
-    const { amount, currency = "usd", token, planName } = body
-
-    if (!amount || !token) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
+export const POST = createApiRoute(
+  async (request: NextRequest, context, user) => {
+    if (!user) {
+      throw ApiErrors.unauthorized("User not authenticated");
     }
 
-    const charge = await stripe.charges.create({
-      amount: Math.round(amount),
-      currency,
-      source: token,
-      description: `Subsync.AI - ${planName} Plan Upgrade`,
-      metadata: {
-        planName,
-      },
-    })
+    const body = await validateRequestBody(request, paymentSchema);
 
-    return NextResponse.json(
+    const paymentService = new PaymentService({
+      provider: body.provider,
+    });
+
+    const result = await paymentService.processPayment(
+      body.amount,
+      body.currency,
+      body.token,
       {
-        success: true,
+        planName: body.planName,
+        userId: user.id,
+        userEmail: user.email || "",
+      },
+    );
+
+    if (!result.success) {
+      throw ApiErrors.internalError(
+        `Payment processing failed: ${result.error || "Unknown error"}`,
+      );
+    }
+
+    return createSuccessResponse(
+      {
         payment: {
-          id: charge.id,
-          amount: charge.amount,
-          currency: charge.currency,
-          status: charge.status,
-          createdAt: new Date(charge.created * 1000),
+          id: result.transactionId,
+          amount: body.amount,
+          currency: body.currency,
+          status: "succeeded",
+          createdAt: new Date(),
         },
       },
-      { status: 201 },
-    )
-  } catch (error) {
-    console.error("Payment error:", error)
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to process payment" },
-      { status: 500 },
-    )
-  }
-}
+      HttpStatus.CREATED,
+      context.requestId,
+    );
+  },
+  {
+    requireAuth: true,
+    rateLimit: RateLimiters.strict,
+  },
+);

@@ -1,7 +1,11 @@
 import axios from "axios";
 
+const STAGING_API  = "https://backend-staging.onrender.com";
+const PROD_API     = "https://backend-ai-sub.onrender.com";
+
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE || "https://backend-ai-sub.onrender.com";
+  process.env.NEXT_PUBLIC_API_BASE ||
+  (process.env.NEXT_PUBLIC_APP_ENV === "staging" ? STAGING_API : PROD_API);
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -9,6 +13,27 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+});
+
+/** Read the csrf-token cookie set by the backend and attach it as a header. */
+function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+const MUTATING_METHODS = new Set(["post", "put", "patch", "delete"]);
+
+// Attach x-csrf-token header on all mutating requests
+api.interceptors.request.use((config) => {
+  if (config.method && MUTATING_METHODS.has(config.method.toLowerCase())) {
+    const token = getCsrfToken();
+    if (token) {
+      config.headers = config.headers ?? {};
+      config.headers["x-csrf-token"] = token;
+    }
+  }
+  return config;
 });
 
 // Add response interceptor to log auth errors

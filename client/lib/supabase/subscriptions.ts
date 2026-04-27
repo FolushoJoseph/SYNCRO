@@ -19,6 +19,8 @@ export interface Subscription {
   is_trial: boolean
   trial_ends_at?: string
   price_after_trial?: number
+  trial_converts_to_price?: number
+  credit_card_required?: boolean
   source: string
   manually_edited: boolean
   edited_fields: string[]
@@ -30,6 +32,9 @@ export interface Subscription {
   resumes_at?: string
   price_range?: { min: number; max: number }
   price_history?: Array<{ date: string; amount: number }>
+  expired_at?: string
+  notes?: string
+  custom_tag_ids?: string[]
 }
 
 export async function fetchSubscriptions(): Promise<Subscription[]> {

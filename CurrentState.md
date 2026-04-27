@@ -162,10 +162,12 @@ SYNCRO/
 - Telegram bot integration
 
 **Security**
-- Rate limiting
-- Input validation
-- API key encryption
-- Webhook signature verification
+- [x] Secret Management: `SecretProvider` interface and `LocalSecretProvider` implemented
+- [x] Log Masking: Recursive masking of sensitive keys in logs (Winston format)
+- [ ] Rate limiting
+- [ ] Input validation
+- [ ] API key encryption
+- [ ] Webhook signature verification
 
 **Testing**
 - No tests configured

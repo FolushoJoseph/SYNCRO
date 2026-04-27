@@ -1,7 +1,6 @@
-#![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contractevent, contracttype, vec, Env, String, Vec, Address, BytesN,
-    xdr::ToXdr,
+    contract, contractevent, contractimpl, contracttype, vec, xdr::ToXdr, Address, BytesN, Env,
+    String, Vec,
 };
 
 #[contracttype]
@@ -66,6 +65,7 @@ impl SubscriptionRegistry {
         expected_amount: i128,
         next_renewal: u64,
     ) -> BytesN<32> {
+        user.require_auth();
         if billing_interval == 0 {
             panic!("billing_interval must be greater than 0");
         }
@@ -74,6 +74,20 @@ impl SubscriptionRegistry {
         }
         if next_renewal == 0 {
             panic!("next_renewal must be greater than 0");
+        }
+
+        let mut user_subs: Vec<BytesN<32>> = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserSubscriptions(user.clone()))
+            .unwrap_or_else(|| vec![&env]);
+
+        for sub_id in user_subs.iter() {
+            if let Some(meta) = env.storage().instance().get::<_, SubscriptionMetadata>(&DataKey::Subscription(sub_id)) {
+                if meta.service_id == service_id && meta.is_active {
+                    panic!("duplicate subscription for service");
+                }
+            }
         }
 
         // Generate unique subscription ID using counter and user address
@@ -91,13 +105,9 @@ impl SubscriptionRegistry {
         let mut id_bytes = [0u8; 32];
         let counter_bytes = counter.to_be_bytes();
         let user_bytes = user.clone().to_xdr(&env);
-        for i in 0..8 {
-            id_bytes[i] = counter_bytes[i];
-        }
+        id_bytes[..8].copy_from_slice(&counter_bytes);
         let user_hash = env.crypto().sha256(&user_bytes);
-        for i in 0..24 {
-            id_bytes[i + 8] = user_hash.to_array()[i];
-        }
+        id_bytes[8..32].copy_from_slice(&user_hash.to_array()[..24]);
         let subscription_id = BytesN::from_array(&env, &id_bytes);
 
         let metadata = SubscriptionMetadata {
@@ -111,11 +121,6 @@ impl SubscriptionRegistry {
             .instance()
             .set(&DataKey::Subscription(subscription_id.clone()), &metadata);
 
-        let mut user_subs: Vec<BytesN<32>> = env
-            .storage()
-            .instance()
-            .get(&DataKey::UserSubscriptions(user.clone()))
-            .unwrap_or_else(|| vec![&env]);
         user_subs.push_back(subscription_id.clone());
         env.storage()
             .instance()
@@ -144,6 +149,7 @@ impl SubscriptionRegistry {
         expected_amount: Option<i128>,
         next_renewal: Option<u64>,
     ) {
+        user.require_auth();
         let mut metadata: SubscriptionMetadata = env
             .storage()
             .instance()
@@ -193,6 +199,7 @@ impl SubscriptionRegistry {
 
     /// Cancel a subscription by marking it as inactive
     pub fn cancel_subscription(env: Env, subscription_id: BytesN<32>, user: Address) {
+        user.require_auth();
         let mut metadata: SubscriptionMetadata = env
             .storage()
             .instance()

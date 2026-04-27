@@ -1,0 +1,229 @@
+import { supabase, monitorPool, PoolMetrics } from '../config/database';
+import logger from '../config/logger';
+
+export interface SubscriptionMetrics {
+    total_subscriptions: number;
+    active_subscriptions: number;
+    category_distribution: Record<string, number>;
+    total_monthly_revenue: number;
+}
+
+export interface TrialMetrics {
+    active_trials: number;
+    trials_expiring_in_7_days: number;
+    saved_by_syncro: number;       // trials cancelled before auto-charge after receiving a reminder
+    intentional_conversions: number;
+    automatic_conversions: number;
+}
+
+export interface RenewalMetrics {
+    total_delivery_attempts: number;
+    success_rate: number;
+    failure_rate: number;
+    channel_distribution: Record<string, { success: number; failure: number }>;
+}
+
+export interface AgentActivity {
+    pending_reminders: number;
+    processed_reminders_last_24h: number;
+    confirmed_blockchain_events: number;
+    failed_blockchain_events: number;
+}
+
+export class MonitoringService {
+    /**
+     * Helper to time a query and log its execution time.
+     */
+    private async timeQuery<T>(name: string, query: Promise<T>, contextId?: string): Promise<T> {
+        const start = Date.now();
+        const meta = contextId ? { requestId: contextId } : {};
+        try {
+            const result = await query;
+            logger.info(`Monitoring Query: ${name} took ${Date.now() - start}ms`, meta);
+            return result;
+        } catch (error) {
+            logger.error(`Monitoring Query: ${name} failed after ${Date.now() - start}ms`, { ...meta, error });
+            throw error;
+        }
+    }
+
+    /**
+     * Get subscription metrics
+     */
+    async getSubscriptionMetrics(contextId?: string): Promise<SubscriptionMetrics> {
+        return this.timeQuery('getSubscriptionMetrics', (async () => {
+            // Use RPC for efficiency on large tables
+            const { data, error } = await supabase.rpc('get_subscription_metrics');
+
+            if (error) {
+                // Fallback for cases where RPC is not defined or fails
+                logger.warn('fallback to manual counting for subscription metrics as RPC failed');
+                const [
+                    { count: totalCount },
+                    { count: activeCount },
+                    // Limit raw fetch for metrics that can't be computed with simple counts
+                    { data: subs }
+                ] = await Promise.all([
+                    supabase.from('subscriptions').select('*', { count: 'exact', head: true }),
+                    supabase.from('subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+                    supabase.from('subscriptions').select('category, price, status, billing_cycle').limit(10000)
+                ]);
+
+                const metrics: SubscriptionMetrics = {
+                    total_subscriptions: totalCount || 0,
+                    active_subscriptions: activeCount || 0,
+                    category_distribution: {},
+                    total_monthly_revenue: 0,
+                };
+
+                if (subs) {
+                    for (const sub of subs) {
+                        metrics.category_distribution[sub.category] = (metrics.category_distribution[sub.category] || 0) + 1;
+                        if (sub.status === 'active') {
+                            let monthlyPrice = sub.price;
+                            if (sub.billing_cycle === 'yearly') monthlyPrice = sub.price / 12;
+                            else if (sub.billing_cycle === 'weekly') monthlyPrice = sub.price * 4;
+                            metrics.total_monthly_revenue += monthlyPrice;
+                        }
+                    }
+                }
+                return metrics;
+            }
+
+            return data as SubscriptionMetrics;
+        })(), contextId);
+    }
+
+    /**
+     * Get renewal metrics based on notification deliveries
+     */
+    async getRenewalMetrics(contextId?: string): Promise<RenewalMetrics> {
+        return this.timeQuery('getRenewalMetrics', (async () => {
+            const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            
+            // Limit to last 24h of deliveries and cap the result set
+            const { data: deliveries, error } = await supabase
+                .from('notification_deliveries')
+                .select('channel, status')
+                .gte('created_at', yesterday)
+                .limit(5000);
+
+            if (error) throw error;
+
+            const metrics: RenewalMetrics = {
+                total_delivery_attempts: deliveries.length,
+                success_rate: 0,
+                failure_rate: 0,
+                channel_distribution: {},
+            };
+
+            if (deliveries.length === 0) return metrics;
+
+            let successes = 0;
+            let failures = 0;
+
+            for (const d of deliveries) {
+                if (!metrics.channel_distribution[d.channel]) {
+                    metrics.channel_distribution[d.channel] = { success: 0, failure: 0 };
+                }
+
+                if (d.status === 'sent') {
+                    successes++;
+                    metrics.channel_distribution[d.channel].success++;
+                } else if (d.status === 'failed') {
+                    failures++;
+                    metrics.channel_distribution[d.channel].failure++;
+                }
+            }
+
+            metrics.success_rate = (successes / deliveries.length) * 100;
+            metrics.failure_rate = (failures / deliveries.length) * 100;
+
+            return metrics;
+        })(), contextId);
+    }
+
+    /**
+     * Get agent activity summary
+     */
+    async getAgentActivity(contextId?: string): Promise<AgentActivity> {
+        return this.timeQuery('getAgentActivity', (async () => {
+            const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+            const [
+                { count: pendingCount },
+                { count: processedCount },
+                { data: bcLogs }
+            ] = await Promise.all([
+                supabase.from('reminder_schedules').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+                supabase.from('reminder_schedules').select('*', { count: 'exact', head: true }).neq('status', 'pending').gte('updated_at', yesterday),
+                // Optimized log query with limit and date filter
+                supabase.from('blockchain_logs')
+                    .select('status, created_at')
+                    .gte('created_at', yesterday)
+                    .order('created_at', { ascending: false })
+                    .limit(1000)
+            ]);
+
+            return {
+                pending_reminders: pendingCount || 0,
+                processed_reminders_last_24h: processedCount || 0,
+                confirmed_blockchain_events: bcLogs?.filter((l: any) => l.status === 'confirmed').length || 0,
+                failed_blockchain_events: bcLogs?.filter((l: any) => l.status === 'failed').length || 0,
+            };
+        })(), contextId);
+    }
+
+    /**
+     * Get trial-specific metrics including "saved by SYNCRO" count
+     */
+    async getTrialMetrics(contextId?: string): Promise<TrialMetrics> {
+      try {
+        const now = new Date().toISOString();
+        const in7Days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        const [
+          { count: activeTrials },
+          { count: expiringTrials },
+          { data: conversionEvents },
+        ] = await Promise.all([
+          supabase
+            .from('subscriptions')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_trial', true)
+            .in('status', ['active', 'trial'])
+            .gt('trial_ends_at', now),
+          supabase
+            .from('subscriptions')
+            .select('*', { count: 'exact', head: true })
+            .eq('is_trial', true)
+            .in('status', ['active', 'trial'])
+            .gt('trial_ends_at', now)
+            .lte('trial_ends_at', in7Days),
+          supabase
+            .from('trial_conversion_events')
+            .select('conversion_type, saved_by_syncro'),
+        ]);
+
+        const events = conversionEvents ?? [];
+
+        return {
+          active_trials: activeTrials ?? 0,
+          trials_expiring_in_7_days: expiringTrials ?? 0,
+          saved_by_syncro: events.filter((e) => e.saved_by_syncro).length,
+          intentional_conversions: events.filter((e) => e.conversion_type === 'intentional').length,
+          automatic_conversions: events.filter((e) => e.conversion_type === 'automatic').length,
+        };
+      } catch (error) {
+        logger.error('Error fetching trial metrics:', { requestId: contextId, error });
+        throw error;
+      }
+    }
+
+    /** Returns current DB connection pool metrics. */
+    getPoolMetrics(): PoolMetrics {
+        return monitorPool();
+    }
+}
+
+export const monitoringService = new MonitoringService();
