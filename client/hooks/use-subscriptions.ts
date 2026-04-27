@@ -204,7 +204,7 @@ export function useSubscriptions({
             label: "Undo",
             onClick: async () => {
               try {
-                await deleteSubscription(dbSubscription.id);
+                await dbDeleteSubscription(dbSubscription.id);
                 undo();
                 onToast({
                   title: "Undone",
@@ -268,7 +268,10 @@ export function useSubscriptions({
             label: "Undo",
             onClick: async () => {
               if (deletedSubToRestore) {
-                const restoredSubs = [...subscriptions, deletedSubToRestore];
+                const restoredSubs = [
+                  ...subscriptions.filter((existing) => existing.id !== id),
+                  deletedSubToRestore,
+                ];
                 updateSubscriptions(restoredSubs);
                 onToast({
                   title: "Restored",
