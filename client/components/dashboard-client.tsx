@@ -1,3 +1,22 @@
+/**
+ * DashboardClient — client component for the /dashboard route.
+ *
+ * Architecture note:
+ *   This component is the client half of the /dashboard server/client split.
+ *   Its server counterpart (app/dashboard/page.tsx) is responsible for:
+ *     - Auth guard (redirects unauthenticated users to /auth/login)
+ *     - Initial data fetching (subscriptions, email accounts, team members,
+ *       notifications, profile) via Supabase server client
+ *
+ *   This component is responsible for:
+ *     - All interactive UI: sign-out, GDPR export/delete, subscription display
+ *     - Client-side state derived from the server-fetched initial props
+ *     - No data fetching of its own — it consumes props from the server page
+ *
+ *   This route (/dashboard) is a focused, lightweight view. The full-featured
+ *   app shell (multi-view, undo/redo, modals, analytics) lives at / via
+ *   AppClient (client/components/app/app-client.tsx).
+ */
 "use client"
 
 import { useState } from "react"

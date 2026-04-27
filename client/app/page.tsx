@@ -1,41 +1,29 @@
+/**
+ * Home page — server component.
+ *
+ * Responsibilities (server only):
+ *   - Auth guard: unauthenticated users receive empty initial data; the client
+ *     layer (AppClient / useAuth) handles the redirect to /auth/login.
+ *   - Initial data fetch: subscriptions, email accounts, and payments are
+ *     fetched server-side so the first paint is hydrated.
+ *   - No UI logic, no state, no event handlers.
+ *
+ * All orchestration (view switching, modals, bulk actions, undo/redo, etc.)
+ * lives in AppClient → AppContent (client/components/app/app-client.tsx).
+ *
+ * Data shape: raw DB rows (snake_case) are passed directly as
+ * `Subscription[]` from @/lib/supabase/subscriptions — no transformation
+ * is performed here. AppClient and its hooks consume that type natively.
+ *
+ * Deferred fetches (not yet implemented server-side):
+ *   - priceChanges          — passed as [] until a dedicated RPC/table is ready
+ *   - consolidationSuggestions — passed as [] until a dedicated RPC/table is ready
+ */
+
 import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { AppClient } from "@/components/app/app-client";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-
-// Helper to transform DB subscription (snake_case) to app format (camelCase)
-function transformSubscription(dbSub: any): any {
-    return {
-        id: dbSub.id,
-        name: dbSub.name,
-        category: dbSub.category,
-        price: dbSub.price,
-        icon: dbSub.icon || "🔗",
-        renewsIn: dbSub.renews_in,
-        status: dbSub.status,
-        color: dbSub.color || "#000000",
-        renewalUrl: dbSub.renewal_url,
-        tags: dbSub.tags || [],
-        dateAdded: dbSub.date_added,
-        emailAccountId: dbSub.email_account_id,
-        lastUsedAt: dbSub.last_used_at,
-        hasApiKey: dbSub.has_api_key || false,
-        isTrial: dbSub.is_trial || false,
-        trialEndsAt: dbSub.trial_ends_at,
-        priceAfterTrial: dbSub.price_after_trial,
-        source: dbSub.source || "manual",
-        manuallyEdited: dbSub.manually_edited || false,
-        editedFields: dbSub.edited_fields || [],
-        pricingType: dbSub.pricing_type || "fixed",
-        billingCycle: dbSub.billing_cycle || "monthly",
-        cancelledAt: dbSub.cancelled_at,
-        activeUntil: dbSub.active_until,
-        pausedAt: dbSub.paused_at,
-        resumesAt: dbSub.resumes_at,
-        priceRange: dbSub.price_range,
-        priceHistory: dbSub.price_history,
-    };
-}
 
 async function getInitialData() {
     try {
@@ -45,7 +33,7 @@ async function getInitialData() {
         } = await supabase.auth.getUser();
 
         if (!user) {
-            // Not authenticated - return empty data
+            // Not authenticated — return empty data; AppClient handles auth redirect.
             return {
                 subscriptions: [],
                 emailAccounts: [],
@@ -55,36 +43,34 @@ async function getInitialData() {
             };
         }
 
-        // Fetch real data from database
-        const [subscriptionsResult, emailAccountsResult, paymentsResult] = await Promise.all([
-            supabase
-                .from("subscriptions")
-                .select("*")
-                .eq("user_id", user.id)
-                .order("date_added", { ascending: false }),
-            supabase.from("email_accounts").select("*").eq("user_id", user.id),
-            supabase
-                .from("payments")
-                .select("*")
-                .eq("user_id", user.id)
-                .order("created_at", { ascending: false }),
-        ]);
-
-        const subscriptions =
-            subscriptionsResult.data?.map(transformSubscription) || [];
-        const emailAccounts = emailAccountsResult.data || [];
-        const payments = paymentsResult.data || [];
+        const [subscriptionsResult, emailAccountsResult, paymentsResult] =
+            await Promise.all([
+                supabase
+                    .from("subscriptions")
+                    .select("*")
+                    .eq("user_id", user.id)
+                    .order("date_added", { ascending: false }),
+                supabase
+                    .from("email_accounts")
+                    .select("*")
+                    .eq("user_id", user.id),
+                supabase
+                    .from("payments")
+                    .select("*")
+                    .eq("user_id", user.id)
+                    .order("created_at", { ascending: false }),
+            ]);
 
         return {
-            subscriptions,
-            emailAccounts,
-            payments,
-            priceChanges: [], // TODO: Fetch from database
-            consolidationSuggestions: [], // TODO: Fetch from database
+            subscriptions: subscriptionsResult.data ?? [],
+            emailAccounts: emailAccountsResult.data ?? [],
+            payments: paymentsResult.data ?? [],
+            // Not yet fetched server-side — AppClient derives these client-side.
+            priceChanges: [],
+            consolidationSuggestions: [],
         };
     } catch (error) {
         console.error("Error fetching initial data:", error);
-        // Fallback to empty data on error
         return {
             subscriptions: [],
             emailAccounts: [],
