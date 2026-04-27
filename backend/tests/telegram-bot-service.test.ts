@@ -12,17 +12,15 @@ var mockSingle = jest.fn();
 var mockEq = jest.fn(() => ({ single: mockSingle }));
 var mockSelect = jest.fn(() => ({ eq: mockEq }));
 var mockFrom = jest.fn(() => ({ select: mockSelect }));
-var mockTrackDbRequest = jest.fn(() => jest.fn()); // returns a no-op release fn
+var mockTrackDbRequest = jest.fn(() => jest.fn());
 
 jest.mock('../src/config/database', () => ({
-  get supabase() { return { from: mockFrom }; },   // ← getter
-  get trackDbRequest() { return mockTrackDbRequest; }, // ← getter
+  get supabase() { return { from: mockFrom }; },
+  get trackDbRequest() { return mockTrackDbRequest; },
 }));
 
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeFetchResponse(status: number, body = '{}'): Response {
   return {
@@ -40,8 +38,6 @@ function stubChatId(chatId: string | null): void {
   );
 }
 
-// ─── Setup ───────────────────────────────────────────────────────────────────
-
 beforeEach(() => {
   jest.clearAllMocks();
 
@@ -52,8 +48,6 @@ beforeEach(() => {
 
   process.env.TELEGRAM_BOT_TOKEN = 'test-bot-token-123';
 });
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('TelegramBotService.sendRenewalReminder', () => {
   const service = new TelegramBotService();
