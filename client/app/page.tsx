@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { AppClient } from "@/components/app/app-client";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import type { ConsolidationSuggestion } from "@/lib/types";
 
 // Helper to transform DB subscription (snake_case) to app format (camelCase)
 function transformSubscription(dbSub: any): any {
@@ -35,6 +36,42 @@ function transformSubscription(dbSub: any): any {
         priceRange: dbSub.price_range,
         priceHistory: dbSub.price_history,
     };
+}
+
+const FLAGGABLE_CATEGORIES = ["ai_tools", "entertainment", "productivity", "design", "music"];
+
+// Bundle suggestions per category — good enough for an initial render
+const BUNDLE_SUGGESTIONS: Record<string, string> = {
+  ai_tools: "one AI subscription",
+  entertainment: "a streaming bundle",
+  productivity: "a single productivity suite",
+  design: "one design tool",
+  music: "one music service",
+};
+
+function buildConsolidationSuggestions(subscriptions: any[]): ConsolidationSuggestion[] {
+  const byCategory: Record<string, any[]> = {};
+  for (const sub of subscriptions) {
+    const cat = sub.category;
+    if (!cat || !FLAGGABLE_CATEGORIES.includes(cat)) continue;
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(sub);
+  }
+
+  return Object.entries(byCategory)
+    .filter(([, group]) => group.length >= 2)
+    .map(([category, group]) => {
+      const monthlyCost = group.reduce((sum: number, s: any) => sum + (s.price ?? 0), 0);
+      const cheapest = Math.min(...group.map((s: any) => s.price ?? 0));
+      const savings = (monthlyCost - cheapest).toFixed(2);
+      return {
+        id: `consolidation_${category}`,
+        category: category.replace("_", " "),
+        services: group.map((s: any) => s.name),
+        suggestedBundle: BUNDLE_SUGGESTIONS[category] ?? "a single plan",
+        savings: `$${savings}`,
+      };
+    });
 }
 
 async function getInitialData() {
@@ -79,8 +116,8 @@ async function getInitialData() {
             subscriptions,
             emailAccounts,
             payments,
-            priceChanges: [], // TODO: Fetch from database
-            consolidationSuggestions: [], // TODO: Fetch from database
+            priceChanges: [],
+            consolidationSuggestions: buildConsolidationSuggestions(subscriptions),
         };
     } catch (error) {
         console.error("Error fetching initial data:", error);
